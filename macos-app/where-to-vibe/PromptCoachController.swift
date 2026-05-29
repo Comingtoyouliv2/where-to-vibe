@@ -128,26 +128,29 @@ final class PromptCoachController {
 
         acceptController.canAcceptWithTab = { [weak self] in
             guard let self, let suggestion = self.appState.selectedSuggestion else { return false }
-            return self.isKeyHandlingActive && suggestion.canAcceptWithTab
+            // Tab copies whatever advice is currently on screen. As long as the
+            // panel is showing and there's some text to copy, Tab works — we do
+            // NOT gate on the suggestion's intent or on the rewrite field
+            // specifically (advisory suggestions keep their text in `reason`).
+            return self.appState.shouldShowSuggestionPanel
+                && !self.copyableAdviceText(for: suggestion).isEmpty
         }
 
         acceptController.accept = { [weak self] in
             guard let self,
-                  self.isKeyHandlingActive,
-                  let suggestion = self.appState.selectedSuggestion,
-                  suggestion.canAcceptWithTab
+                  let suggestion = self.appState.selectedSuggestion
             else { return }
-            // Tab copies the suggestion to the clipboard rather than inserting
-            // it into the focused field. The user pastes it with ⌘V wherever
-            // they want — this avoids fighting the target app's own Tab/indent
-            // behaviour and works even in apps where direct insertion via the
-            // Accessibility API isn't reliable.
+            let adviceText = self.copyableAdviceText(for: suggestion)
+            guard !adviceText.isEmpty else { return }
+            // Copy the visible advice to the clipboard; the user pastes it with
+            // ⌘V wherever they want. We copy rather than insert so we don't
+            // fight the target app's own Tab/indent behaviour.
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            pasteboard.setString(suggestion.text, forType: .string)
+            pasteboard.setString(adviceText, forType: .string)
             GBrainMemoryStore.shared.recordAcceptedSuggestion(
                 originalInput: self.appState.currentInput,
-                acceptedPrompt: suggestion.text,
+                acceptedPrompt: adviceText,
                 userLevel: self.appState.effectiveUserLevel,
                 stage: self.appState.effectivePromptEvolutionStage
             )
@@ -164,6 +167,21 @@ final class PromptCoachController {
         acceptController.observeKeyInput = { [weak self] input in
             self?.recordFallbackInput(input)
         }
+    }
+
+    /// The text Tab should copy for a given suggestion: the rewrite (`text`)
+    /// when present, otherwise the advice headline (`lastReason` / the
+    /// suggestion's own `reason`). Trimmed; empty string means "nothing to
+    /// copy". This is what makes Tab work for every kind of advice, not just
+    /// rewrite suggestions.
+    private func copyableAdviceText(for suggestion: PromptSuggestion) -> String {
+        let rewrite = suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rewrite.isEmpty {
+            return rewrite
+        }
+        let reason = (appState.lastReason ?? suggestion.reason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return reason
     }
 
     private func observeMouseActivity() {
