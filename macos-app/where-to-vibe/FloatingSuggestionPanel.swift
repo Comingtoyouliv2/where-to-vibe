@@ -14,6 +14,15 @@ final class FloatingSuggestionPanel {
     private var cancellables = Set<AnyCancellable>()
     private let panelSize = CGSize(width: 360, height: 260)
 
+    // Cursor-follow: while the panel is visible, a 60Hz timer eases the panel
+    // toward the mouse so it glides with the cursor instead of jumping to a
+    // new spot each time the advice updates.
+    private var cursorFollowTimer: Timer?
+    private var smoothedPanelOrigin: CGPoint?
+    /// Per-tick easing factor. Lower = floatier, higher = snappier. 0.18 at
+    /// 60Hz catches up to the cursor in a few frames without feeling rigid.
+    private let cursorFollowEaseFactor: CGFloat = 0.18
+
     init(appState: AppState) {
         self.appState = appState
         observeState()
@@ -36,6 +45,7 @@ final class FloatingSuggestionPanel {
         ensurePanel()
         positionPanel(near: anchor)
         panel?.orderFrontRegardless()
+        startCursorFollow()
         let frame = panel?.frame ?? .zero
         print("[Coach/Panel] show() at frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.size.width))x\(Int(frame.size.height))) isVisible=\(panel?.isVisible == true)")
     }
@@ -44,6 +54,7 @@ final class FloatingSuggestionPanel {
         if panel?.isVisible == true {
             print("[Coach/Panel] hide() — was visible.")
         }
+        stopCursorFollow()
         panel?.orderOut(nil)
     }
 
@@ -92,20 +103,68 @@ final class FloatingSuggestionPanel {
             width: max(size.width, panelSize.width),
             height: max(size.height, panelSize.height)
         )
+        let origin = panelOrigin(forSize: layoutSize, near: anchor)
+        panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
+        // Seed the smoothed origin so the follow timer eases from here rather
+        // than snapping on its first tick.
+        smoothedPanelOrigin = origin
+    }
+
+    /// Clamped top-anchored origin for a panel of `size` placed next to
+    /// `anchor` (screen coords). Factored out of positionPanel so the
+    /// cursor-follow timer can reuse the exact same offset + clamp rules.
+    private func panelOrigin(forSize size: CGSize, near anchor: CGPoint) -> CGPoint {
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
         let screenFrame = screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
 
-        var origin = CGPoint(x: anchor.x + 18, y: anchor.y - layoutSize.height - 10)
-        if origin.x + layoutSize.width > screenFrame.maxX - 10 {
-            origin.x = anchor.x - layoutSize.width - 18
+        var origin = CGPoint(x: anchor.x + 18, y: anchor.y - size.height - 10)
+        if origin.x + size.width > screenFrame.maxX - 10 {
+            origin.x = anchor.x - size.width - 18
         }
         if origin.y < screenFrame.minY + 10 {
             origin.y = anchor.y + 20
         }
-        origin.x = min(max(origin.x, screenFrame.minX + 10), screenFrame.maxX - layoutSize.width - 10)
-        origin.y = min(max(origin.y, screenFrame.minY + 10), screenFrame.maxY - layoutSize.height - 10)
+        origin.x = min(max(origin.x, screenFrame.minX + 10), screenFrame.maxX - size.width - 10)
+        origin.y = min(max(origin.y, screenFrame.minY + 10), screenFrame.maxY - size.height - 10)
+        return origin
+    }
 
-        panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
+    // MARK: - Cursor follow
+
+    /// Starts the 60Hz timer that eases the panel toward the mouse while it's
+    /// visible. Added in `.common` run-loop mode so it keeps animating during
+    /// scrolling / event tracking. Idempotent.
+    private func startCursorFollow() {
+        guard cursorFollowTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.cursorFollowTick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cursorFollowTimer = timer
+    }
+
+    private func stopCursorFollow() {
+        cursorFollowTimer?.invalidate()
+        cursorFollowTimer = nil
+        smoothedPanelOrigin = nil
+    }
+
+    /// One eased step toward the cursor. Moves only the origin (never resizes)
+    /// so it's cheap, and skips sub-pixel moves to avoid compositing churn.
+    private func cursorFollowTick() {
+        guard let panel, panel.isVisible else { return }
+        let targetOrigin = panelOrigin(forSize: panel.frame.size, near: NSEvent.mouseLocation)
+        let current = smoothedPanelOrigin ?? panel.frame.origin
+        let next = CGPoint(
+            x: current.x + (targetOrigin.x - current.x) * cursorFollowEaseFactor,
+            y: current.y + (targetOrigin.y - current.y) * cursorFollowEaseFactor
+        )
+        smoothedPanelOrigin = next
+        if abs(next.x - panel.frame.origin.x) > 0.1 || abs(next.y - panel.frame.origin.y) > 0.1 {
+            panel.setFrameOrigin(next)
+        }
     }
 }
 
