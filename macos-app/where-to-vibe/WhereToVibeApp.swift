@@ -32,6 +32,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private let appState = AppState()
     private var menuBarController: MenuBarController?
     private var promptCoachController: PromptCoachController?
+    private var introSequenceController: IntroSequenceController?
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -72,6 +73,18 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         registerAsLoginItemIfNeeded()
         // startSparkleUpdater()
+
+        // First-launch intro animation (currently plays every launch, for dev).
+        // Small delay so the menu bar status item has been laid out before the
+        // fake cursor flies to it. Purely additive — renders in its own
+        // transparent overlay and doesn't touch the suggestion / Tab path.
+        if let menuBarController {
+            let introSequenceController = IntroSequenceController(menuBarController: menuBarController)
+            self.introSequenceController = introSequenceController
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                introSequenceController.play()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
