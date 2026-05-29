@@ -357,10 +357,10 @@ struct FloatingSuggestionPanelView: View {
         switch intent {
         case .tightenDraft, .fillMissingAxis:
             KeyCap("Tab")
-            Text("accept")
+            Text("copy")
         case .graduateToAgent:
             KeyCap("Tab")
-            Text("accept")
+            Text("copy")
         case .askOneQuestion, .pointAtWrongTool, .staySilent:
             EmptyView()
         }
