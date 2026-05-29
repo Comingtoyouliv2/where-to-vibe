@@ -29,9 +29,8 @@ struct WhereToVibeApp: App {
 /// starts the focused-text observer on launch.
 @MainActor
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
-    private let appState = AppState()
-    private var menuBarController: MenuBarController?
-    private var promptCoachController: PromptCoachController?
+    private var companionManager: CompanionManager?
+    private var menuBarPanelManager: MenuBarPanelManager?
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -45,29 +44,35 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         WhereToVibeAnalytics.configure()
         WhereToVibeAnalytics.trackAppOpened()
 
-        menuBarController = MenuBarController(appState: appState)
-        promptCoachController = PromptCoachController(appState: appState)
-        promptCoachController?.start()
+        // Wire up the LIVE system. CompanionManager owns the auto-coach loop
+        // (screenshot → worker /coach → NudgeBubbleWindow → Tab-to-copy via
+        // TabKeyInterceptor). MenuBarPanelManager hosts the settings panel.
+        //
+        // The old PromptCoachController + MenuBarController MVP is intentionally
+        // no longer started: it installed a SECOND CGEvent tap on Tab that
+        // conflicted with TabKeyInterceptor, spammed the console with poll
+        // logs, and used local/OpenAI suggestions instead of the worker /coach
+        // endpoint. Those types still compile but are now dead code.
+        let companionManager = CompanionManager()
+        self.companionManager = companionManager
+        let menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
+        self.menuBarPanelManager = menuBarPanelManager
+        companionManager.start()
+        menuBarPanelManager.showPanelOnLaunch()
 
-        // Dump current coach state at launch so the user can see in Console.app
-        // whether the panel can theoretically appear (the four conditions that
-        // gate FloatingSuggestionPanel.show) without having to type anything.
-        print("[Coach/Boot] isEnabled=\(appState.isEnabled) hasAccessibilityPermission=\(appState.hasAccessibilityPermission) suggestionMode=\(appState.suggestionMode.rawValue) hasOpenAIAPIKey=\(appState.hasOpenAIAPIKey) language=\(appState.promptLanguage.rawValue) idleCoachEnabled=\(appState.idleCoachEnabled)")
-
-        // Identity dump — if the bundle ID or executable path here does not match
-        // the entry the user enabled in System Settings → Accessibility, the
-        // permission will silently NOT apply, even though the checkbox is on.
+        // Identity + permission diagnostics. TabKeyInterceptor (Tab → copy the
+        // rewrite) needs the ACCESSIBILITY permission specifically, and it
+        // creates its CGEvent tap once at startup. The nudge bubble itself only
+        // needs Screen Recording — so a bubble can appear while Tab still does
+        // nothing if Accessibility is missing. In that case: grant it, then
+        // QUIT AND RELAUNCH so the Tab tap is created with permission present.
         let bundleId = Bundle.main.bundleIdentifier ?? "(no bundle id)"
         let executablePath = Bundle.main.executablePath ?? "(no executable path)"
-        let processName = ProcessInfo.processInfo.processName
-        print("[Coach/Identity] bundleID=\(bundleId)")
-        print("[Coach/Identity] executablePath=\(executablePath)")
-        print("[Coach/Identity] processName=\(processName)")
-        print("[Coach/Identity] If System Settings → Accessibility shows a DIFFERENT app name (e.g. \"Where-to-vibe\" or \"where-to-vibe\") with a checkmark, that entry is for a different bundle ID and is NOT granting permission to THIS app. Remove old entries with the - button and re-add the currently running app.")
-        if !appState.hasAccessibilityPermission {
-            print("[Coach/Boot] Accessibility permission MISSING. Opening menu-bar panel and prompting the system dialog. Grant in System Settings → Privacy & Security → Accessibility, then quit and relaunch.")
-            menuBarController?.showPanel()
-            _ = AccessibilityTextReader.hasPermission(prompt: true)
+        print("[Where-to-vibe/Identity] bundleID=\(bundleId)")
+        print("[Where-to-vibe/Identity] executablePath=\(executablePath)")
+        if !companionManager.hasAccessibilityPermission {
+            print("[Where-to-vibe/Boot] Accessibility MISSING — Tab interception is inactive until granted. Prompting now; grant in System Settings → Privacy & Security → Accessibility, then quit and relaunch.")
+            _ = WindowPositionManager.requestAccessibilityPermission()
         }
 
         registerAsLoginItemIfNeeded()
@@ -75,7 +80,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        promptCoachController?.stop()
+        companionManager?.stop()
     }
 
     /// Registers the app as a login item so it launches automatically on
