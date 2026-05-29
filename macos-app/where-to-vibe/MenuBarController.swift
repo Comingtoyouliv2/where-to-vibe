@@ -61,6 +61,14 @@ final class MenuBarController: NSObject {
         installClickOutsideMonitor()
     }
 
+    /// Screen-space frame (AppKit, bottom-left origin) of the menu bar status
+    /// item's button window. Used by the first-launch intro to fly a fake
+    /// cursor to where the app lives in the menu bar. nil before the status
+    /// item has been created / laid out.
+    func menuBarButtonScreenFrame() -> CGRect? {
+        return statusItem?.button?.window?.frame
+    }
+
     private func hidePanel() {
         panel?.orderOut(nil)
         if let clickOutsideMonitor {
