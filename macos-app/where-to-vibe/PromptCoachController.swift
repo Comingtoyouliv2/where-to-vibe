@@ -137,17 +137,22 @@ final class PromptCoachController {
                   let suggestion = self.appState.selectedSuggestion,
                   suggestion.canAcceptWithTab
             else { return }
-            let didInsert = self.textReader.insert(suggestion, replacing: self.appState.currentInput)
-            if didInsert {
-                GBrainMemoryStore.shared.recordAcceptedSuggestion(
-                    originalInput: self.appState.currentInput,
-                    acceptedPrompt: suggestion.text,
-                    userLevel: self.appState.effectiveUserLevel,
-                    stage: self.appState.effectivePromptEvolutionStage
-                )
-                self.appState.clearSuggestions()
-                self.floatingPanel.hide()
-            }
+            // Tab copies the suggestion to the clipboard rather than inserting
+            // it into the focused field. The user pastes it with ⌘V wherever
+            // they want — this avoids fighting the target app's own Tab/indent
+            // behaviour and works even in apps where direct insertion via the
+            // Accessibility API isn't reliable.
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(suggestion.text, forType: .string)
+            GBrainMemoryStore.shared.recordAcceptedSuggestion(
+                originalInput: self.appState.currentInput,
+                acceptedPrompt: suggestion.text,
+                userLevel: self.appState.effectiveUserLevel,
+                stage: self.appState.effectivePromptEvolutionStage
+            )
+            self.appState.clearSuggestions()
+            self.floatingPanel.hide()
         }
 
         acceptController.dismiss = { [weak self] in
