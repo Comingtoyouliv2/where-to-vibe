@@ -1,0 +1,14 @@
+name = "where-to-vibe"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+[vars]
+ELEVENLABS_VOICE_ID = "kPzsL2i3teMYv0FxEYQ6"
+# Default model for /coach. We tried Haiku 4.5 for speed and the latency
+# win was marginal (vision token processing dominates over model size),
+# while quality dropped — Haiku frequently missed the chat input field
+# and returned mode:"none" on screens where Sonnet correctly coached.
+# Sonnet 4.6 is back as the default; Haiku 4.5 stays as the classifier
+# since /classify only needs a single-word answer.
+COACH_MODEL = "claude-sonnet-4-6"
+CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"

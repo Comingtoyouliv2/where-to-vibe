@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template Info.plist for Where-to-vibe.
+
+  The real Info.plist is gitignored because it carries machine-local
+  settings (worker URL, optional dev-mode keys). Copy this file to
+  `Info.plist` in the same directory before building:
+
+      cp Info.plist.example Info.plist
+
+  Then edit `WorkerBaseURL` to point at your worker. For local dev:
+  http://localhost:8787 (matches `npx wrangler dev`). For a deployed
+  worker, use the URL printed by `npx wrangler deploy`.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSUIElement</key>
+	<true/>
+	<!-- URL of your Cloudflare Worker (or compatible proxy) that fronts
+	     the Anthropic API. The worker holds the real ANTHROPIC_API_KEY
+	     as a wrangler secret; nothing sensitive ships in this app. -->
+	<key>WorkerBaseURL</key>
+	<string>http://localhost:8787</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>/l3d2rw5ZZFRU3AadP/w2Zf8FHfhA6bKv16BQOV5OSk=</string>
+	<key>VoiceTranscriptionProvider</key>
+	<string>apple</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Used only if you opt into the legacy voice mode.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Used by Where-to-vibe to create screen-aware AI suggestions when Fast AI or High Quality AI is enabled.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Used only if you opt into the legacy voice mode.</string>
+	<!-- Allows hitting `http://localhost:8787` while you run the worker
+	     with `wrangler dev`. Remove this dict once you deploy the worker
+	     and point WorkerBaseURL at the https URL. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<!-- Optional. Leave empty when using a worker (recommended). Only
+	     set this if you want the upstream direct-Anthropic
+	     fallback for local debugging. NEVER commit a real key here —
+	     Info.plist is gitignored for this reason. -->
+	<key>AnthropicAPIKey</key>
+	<string></string>
+</dict>
+</plist>
+</content>

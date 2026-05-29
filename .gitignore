@@ -1,0 +1,52 @@
+# =============================================================================
+# Secrets and per-machine config — NEVER commit
+# =============================================================================
+
+# Info.plist embeds machine-local settings (WorkerBaseURL) and optionally a
+# dev-mode AnthropicAPIKey. The committed template is Info.plist.example.
+macos-app/where-to-vibe/Info.plist
+!macos-app/where-to-vibe/Info.plist.example
+
+# Cloudflare Worker dev secrets. Committed template is .dev.vars.example.
+worker/.dev.vars
+!worker/.dev.vars.example
+worker/.env
+worker/.env.*
+!worker/.env.example
+
+# Generic env files at the repo root.
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# Build artefacts and tool caches
+# =============================================================================
+
+# Worker / wrangler
+worker/node_modules/
+worker/.wrangler/
+worker/package-lock*.json
+
+# Xcode (build outputs, per-user state, derived data)
+macos-app/build/
+macos-app/DerivedData/
+macos-app/**/xcuserdata/
+macos-app/**/*.xcuserdatad/
+macos-app/**/*.xcuserstate
+macos-app/**/*.xcscheme
+
+# Swift Package Manager
+.swiftpm/
+Packages/
+
+# =============================================================================
+# OS / editor cruft
+# =============================================================================
+
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+</content>

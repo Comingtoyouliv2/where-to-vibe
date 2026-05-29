@@ -1,0 +1,12 @@
+# Local dev secrets for `npx wrangler dev`. Copy to `.dev.vars` and fill
+# in real values. `.dev.vars` itself is gitignored.
+#
+# Get an Anthropic API key at https://console.anthropic.com/settings/keys
+ANTHROPIC_API_KEY=sk-ant-api03-REPLACE_ME
+
+# Only needed if you also want to keep upstream Where-to-vibe's voice mode
+# working (off by default in where-to-vibe). Safe to leave
+# blank for the coaching-only experience.
+ASSEMBLYAI_API_KEY=
+ELEVENLABS_API_KEY=
+</content>
