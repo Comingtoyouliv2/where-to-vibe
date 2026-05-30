@@ -127,21 +127,33 @@ final class PromptCoachController {
         }
 
         acceptController.canAcceptWithTab = { [weak self] in
-            guard let self, let suggestion = self.appState.selectedSuggestion else { return false }
+            guard let self, let suggestion = self.appState.selectedSuggestion else {
+                print("🔧[TabCopy] canAcceptWithTab=false — no selectedSuggestion")
+                return false
+            }
             // Tab copies whatever advice is currently on screen. As long as the
             // panel is showing and there's some text to copy, Tab works — we do
             // NOT gate on the suggestion's intent or on the rewrite field
             // specifically (advisory suggestions keep their text in `reason`).
-            return self.appState.shouldShowSuggestionPanel
-                && !self.copyableAdviceText(for: suggestion).isEmpty
+            let copyText = self.copyableAdviceText(for: suggestion)
+            let ok = self.appState.shouldShowSuggestionPanel && !copyText.isEmpty
+            print("🔧[TabCopy] canAcceptWithTab=\(ok) — panelShowing=\(self.appState.shouldShowSuggestionPanel) copyTextLen=\(copyText.count) suggestion.textLen=\(suggestion.text.count)")
+            return ok
         }
 
         acceptController.accept = { [weak self] in
             guard let self,
                   let suggestion = self.appState.selectedSuggestion
-            else { return }
+            else {
+                print("🔧[TabCopy] accept — no selectedSuggestion, nothing copied")
+                return
+            }
             let adviceText = self.copyableAdviceText(for: suggestion)
-            guard !adviceText.isEmpty else { return }
+            guard !adviceText.isEmpty else {
+                print("🔧[TabCopy] accept — copyable text empty, nothing copied")
+                return
+            }
+            print("🔧[TabCopy] accept — COPIED to clipboard: \"\(adviceText.prefix(40))…\"")
             // Copy the visible advice to the clipboard; the user pastes it with
             // ⌘V wherever they want. We copy rather than insert so we don't
             // fight the target app's own Tab/indent behaviour.
@@ -217,8 +229,12 @@ final class PromptCoachController {
 
         if shouldHandleKeys {
             guard !isKeyHandlingActive else { return }
-            acceptController.start()
-            isKeyHandlingActive = true
+            // Only mark active if the tap actually came up. If tap creation
+            // fails (TCC trust race right after launch / rebuild), leave it
+            // false so the 1.5s permission timer retries start() next tick
+            // instead of getting stuck "active" with no tap — which is exactly
+            // why Tab-to-copy could silently stop working.
+            isKeyHandlingActive = acceptController.start()
             return
         }
 
