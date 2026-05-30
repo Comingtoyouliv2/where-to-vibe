@@ -457,16 +457,33 @@ struct FloatingSuggestionPanelView: View {
             return
         }
 
-        let reason = appState.lastReason ?? "This could be more specific."
+        let isKorean = appState.promptLanguage == .korean
+        let reason = appState.lastReason
+            ?? (isKorean ? "조금 더 구체적으로 해볼까요?" : "This could be more specific.")
+
+        // Frame the rewrite as a modeled example ("here's how I'd write it"),
+        // not a command. If there's no rewrite (a pure question), show nothing
+        // here — the question lives in `reason`.
+        let rewrite = suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suggestionLine: String
+        if rewrite.isEmpty {
+            suggestionLine = ""
+        } else {
+            suggestionLine = isKorean
+                ? "저라면 이렇게 써볼 것 같아요:\n\(rewrite)"
+                : "Here's how I'd write it:\n\(rewrite)"
+        }
+
         typingModel.start(
             id: suggestion.id,
             reason: conversationalReason(reason),
-            suggestion: "Try this: \(suggestion.text)"
+            suggestion: suggestionLine
         )
     }
 
     private func conversationalReason(_ reason: String) -> String {
-        if reason.hasSuffix(".") {
+        // Leave questions/exclamations as-is; only add a period to plain statements.
+        if reason.hasSuffix(".") || reason.hasSuffix("?") || reason.hasSuffix("!") {
             return reason
         }
         return "\(reason)."
