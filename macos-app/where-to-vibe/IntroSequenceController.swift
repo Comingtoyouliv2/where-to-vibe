@@ -23,27 +23,19 @@ import SwiftUI
 /// The AI options offered in the intro.
 enum IntroAI: String, CaseIterable, Identifiable {
     case claude = "Claude"
-    case codex = "Codex"
-    case gpt = "ChatGPT"
 
     var id: String { rawValue }
     var displayName: String { rawValue }
 
-    var systemImage: String {
-        switch self {
-        case .claude: return "sparkle"
-        case .codex:  return "chevron.left.forwardslash.chevron.right"
-        case .gpt:    return "bubble.left.and.bubble.right.fill"
-        }
-    }
+    /// Asset-catalog image name for the real brand logo. Add an image set named
+    /// "logo-claude" (the official Claude logo) to Assets.xcassets. Until it's
+    /// present we fall back to `systemImage` so the build still renders.
+    var logoAssetName: String { "logo-claude" }
 
-    var tint: Color {
-        switch self {
-        case .claude: return Color(red: 0.85, green: 0.55, blue: 0.30) // warm orange
-        case .codex:  return Color(red: 0.45, green: 0.78, blue: 0.55) // green
-        case .gpt:    return Color(red: 0.36, green: 0.72, blue: 0.65) // teal
-        }
-    }
+    /// Fallback glyph used only when the logo asset is missing.
+    var systemImage: String { "sparkle" }
+
+    var tint: Color { Color(red: 0.85, green: 0.55, blue: 0.30) } // warm Claude orange
 }
 
 @MainActor
@@ -54,6 +46,10 @@ final class IntroSequenceController {
     private var sequenceTask: Task<Void, Never>?
     /// Resumed when the user taps an AI choice.
     private var selectionContinuation: CheckedContinuation<IntroAI, Never>?
+    /// Called exactly once when the intro ends (naturally or via stop()). The
+    /// host uses this to pause the live coach during the tutorial and resume.
+    var onFinished: (() -> Void)?
+    private var didFinish = false
 
     init(menuBarController: MenuBarController) {
         self.menuBarController = menuBarController
@@ -76,7 +72,15 @@ final class IntroSequenceController {
         }
         sequenceTask?.cancel()
         sequenceTask = nil
+        finishIntro()
+    }
+
+    /// Tears down the overlay and notifies the host exactly once.
+    private func finishIntro() {
         teardown()
+        guard !didFinish else { return }
+        didFinish = true
+        onFinished?()
     }
 
     // MARK: - Overlay window
@@ -100,6 +104,7 @@ final class IntroSequenceController {
             rootView: IntroOverlayView(
                 model: model,
                 screenSize: screen.frame.size,
+                refinedPrompt: Self.demoRefinedPrompt,
                 onSelectAI: { [weak self] ai in self?.selectAI(ai) }
             )
         )
@@ -170,24 +175,46 @@ final class IntroSequenceController {
         // 5) The companion types a vague prompt into it.
         await typeMockPrompt(Self.demoPrompt)
         if Task.isCancelled { return }
-        await sleep(1.2)  // "thinking" beat
+        await sleep(0.5)
 
-        // 6) Fade the mock and reveal the AMBITION LADDER — the differentiator.
-        //    Same one-line request, three levels of ambition, each surfacing
-        //    the pro tools a beginner doesn't know to ask for.
-        withAnimation(.easeIn(duration: 0.4)) { model.mockOpacity = 0 }
-        await sleep(0.4)
-        model.showMock = false
-        model.ladderTiers = AmbitionLadderLibrary.ladder(for: Self.demoPrompt)
-        model.showLadder = true
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { model.ladderOpacity = 1 }
-        await sleep(8.0)  // time to absorb the three tiers
+        // 5.5) Waiting beat — "wait a moment and the advice comes".
+        model.showThinkingDots = true
+        model.demoCaption = "조금만 기다리면…"
+        await sleep(2.0)
         if Task.isCancelled { return }
 
-        // 7) Fade the ladder out.
-        withAnimation(.easeIn(duration: 0.45)) { model.ladderOpacity = 0 }
+        // 6) Advice arrives — a concrete coaching suggestion, like the real app.
+        model.showThinkingDots = false
+        model.demoCaption = "이렇게 조언을 해줘요 👇"
+        model.showAdvice = true
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { model.adviceOpacity = 1 }
+        await sleep(5.0)  // time to read the advice
+        if Task.isCancelled { return }
+
+        // 6.5) Tab → copy → paste motion.
+        model.demoCaption = "마음에 들면 — Tab 한 번이면 복사돼요"
+        model.keyHint = "Tab"
+        await pressKeyChip()
+        if Task.isCancelled { return }
+        model.demoCaption = "복사됐어요 ✓  이제 붙여넣기!"
+        model.keyHint = "⌘V"
+        await pressKeyChip()
+        if Task.isCancelled { return }
+        // The vague prompt is replaced by a concrete, coached version (paste).
+        model.keyHint = nil
+        withAnimation(.easeInOut(duration: 0.25)) { model.promptHighlight = true }
+        model.mockPrompt = Self.demoRefinedPrompt
+        await sleep(1.6)
+        withAnimation(.easeOut(duration: 0.4)) { model.promptHighlight = false }
+        await sleep(0.6)
+        if Task.isCancelled { return }
+
+        // 7) Fade the whole demo out.
+        withAnimation(.easeIn(duration: 0.45)) { model.mockOpacity = 0 }
         await sleep(0.45)
-        model.showLadder = false
+        model.showMock = false
+        model.showAdvice = false
+        model.demoCaption = nil
 
         // 8) Finale chat.
         model.showFinale = true
@@ -232,7 +259,7 @@ final class IntroSequenceController {
             model.cursorOpacity = 0
         }
         await sleep(0.5)
-        teardown()
+        finishIntro()
     }
 
     /// Converts the menu bar button's screen frame (AppKit, bottom-left origin)
@@ -270,6 +297,15 @@ final class IntroSequenceController {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
+    /// Animates one key-chip "press" (shrink + release) with a short beat.
+    private func pressKeyChip() async {
+        await sleep(0.45)
+        withAnimation(.easeOut(duration: 0.12)) { model.keyPressed = true }
+        await sleep(0.16)
+        withAnimation(.easeIn(duration: 0.14)) { model.keyPressed = false }
+        await sleep(0.5)
+    }
+
     private static let introText = """
     안녕하세요 👋
 
@@ -286,6 +322,7 @@ final class IntroSequenceController {
     """
 
     private static let demoPrompt = "앱을 만들어줘"
+    private static let demoRefinedPrompt = "혼자 쓰는 간단한 할 일 앱, 추가와 완료 체크만 되면 돼"
 }
 
 /// Borderless transparent window that hosts the intro. Can become key (so the
@@ -312,14 +349,16 @@ final class IntroSequenceModel: ObservableObject {
     @Published var mockOpacity: Double = 0
     @Published var mockPrompt: String = ""
 
-    // Coach advice bubble
-    @Published var adviceText: String? = nil
-    @Published var adviceOpacity: Double = 0
+    // Demo captions + key cues (the "wait → advice → Tab to copy" narration)
+    @Published var demoCaption: String? = nil
+    @Published var showThinkingDots: Bool = false
+    @Published var keyHint: String? = nil      // "Tab" / "⌘V" chip during the copy motion
+    @Published var keyPressed: Bool = false     // press animation for the key chip
+    @Published var promptHighlight: Bool = false  // brief flash when the pasted prompt lands
 
-    // Ambition ladder (the differentiator)
-    @Published var showLadder: Bool = false
-    @Published var ladderOpacity: Double = 0
-    @Published var ladderTiers: [AmbitionTier] = []
+    // Real coaching advice shown in the demo (a concrete suggestion, like the app)
+    @Published var showAdvice: Bool = false
+    @Published var adviceOpacity: Double = 0
 
     // Finale chat
     @Published var showFinale: Bool = false
@@ -343,6 +382,7 @@ final class IntroSequenceModel: ObservableObject {
 private struct IntroOverlayView: View {
     @ObservedObject var model: IntroSequenceModel
     let screenSize: CGSize
+    let refinedPrompt: String
     let onSelectAI: (IntroAI) -> Void
 
     var body: some View {
@@ -365,14 +405,8 @@ private struct IntroOverlayView: View {
             }
 
             if model.showMock {
-                mockChatWindow
+                demoStack
                     .opacity(model.mockOpacity)
-                    .position(x: screenSize.width / 2, y: screenSize.height / 2)
-            }
-
-            if model.showLadder {
-                AmbitionLadderView(promptText: model.mockPrompt, tiers: model.ladderTiers)
-                    .opacity(model.ladderOpacity)
                     .position(x: screenSize.width / 2, y: screenSize.height / 2)
             }
 
@@ -480,16 +514,34 @@ private struct IntroOverlayView: View {
         .background(cardBackground)
     }
 
+    /// Brand badge: the real logo on a white circle if the asset is present in
+    /// the bundle/asset catalog, otherwise a tinted SF Symbol fallback so the
+    /// build always renders even before the logo files are added.
+    @ViewBuilder
+    private func aiBadge(_ ai: IntroAI, size: CGFloat) -> some View {
+        if let logo = NSImage(named: ai.logoAssetName) {
+            Image(nsImage: logo)
+                .resizable()
+                .scaledToFit()
+                .padding(size * 0.16)
+                .frame(width: size, height: size)
+                .background(Circle().fill(.white))
+                .clipShape(Circle())
+        } else {
+            Image(systemName: ai.systemImage)
+                .font(.system(size: size * 0.48, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(ai.tint.opacity(0.9)))
+        }
+    }
+
     private func aiChoiceButton(_ ai: IntroAI) -> some View {
         Button {
             onSelectAI(ai)
         } label: {
             VStack(spacing: 10) {
-                Image(systemName: ai.systemImage)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(ai.tint.opacity(0.9)))
+                aiBadge(ai, size: 46)
                 Text(ai.displayName)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white)
@@ -508,37 +560,136 @@ private struct IntroOverlayView: View {
         .pointerCursor()
     }
 
-    // MARK: Simulated AI chat window
+    // MARK: Simulated AI chat window + demo
 
-    private var mockChatWindow: some View {
+    /// The full demo column: a narration caption, the simulated AI chat client,
+    /// and the ambition ladder once advice arrives. All fade together.
+    private var demoStack: some View {
         let ai = model.selectedAI ?? .claude
-        return HStack(alignment: .top, spacing: 16) {
-            mockChatClient(ai)
-            if let adviceText = model.adviceText {
-                adviceBubble(adviceText)
-                    .opacity(model.adviceOpacity)
+        return VStack(spacing: 14) {
+            if let caption = model.demoCaption {
+                demoCaptionView(caption)
+            }
+            // Advice sits to the RIGHT of the chat window (not below).
+            HStack(alignment: .top, spacing: 16) {
+                mockChatClient(ai)
+                if model.showAdvice {
+                    adviceBubble
+                        .opacity(model.adviceOpacity)
+                }
             }
         }
+    }
+
+    /// Real-looking coaching advice: a short reason + a concrete rewrite, with a
+    /// "Tab to copy" affordance — exactly the shape the live coach produces.
+    private var adviceBubble: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.32))
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Image(systemName: "sparkle")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                    )
+                Text("where-to-vibe")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+            Text("\"앱을 만들어줘\"는 너무 막연해요. 무엇을 · 누가 · 핵심 기능 1개만 정해도 결과가 확 달라져요.")
+                .font(.system(size: 13))
+                .foregroundStyle(.white)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(.white.opacity(0.15))
+
+            Text("이렇게 써보세요")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+            Text(refinedPrompt)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 6) {
+                Text("Tab")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(.white.opacity(0.16))
+                    )
+                Text("눌러서 복사")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(width: 360, alignment: .leading)
+        .background(cardBackground)
+    }
+
+    private func demoCaptionView(_ caption: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white.opacity(0.85))
+            Text(caption)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(.black.opacity(0.6))
+                .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+        )
     }
 
     private func mockChatClient(_ ai: IntroAI) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             mockChatHeader(ai)
             Divider().overlay(.white.opacity(0.1))
-            Spacer(minLength: 60)
+            // Response area — shows a "thinking" indicator while waiting.
+            ZStack(alignment: .leading) {
+                if model.showThinkingDots {
+                    thinkingDots(tint: ai.tint)
+                        .padding(.horizontal, 16)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             mockInputBox(ai)
         }
-        .frame(width: 420, height: 280, alignment: .topLeading)
+        .frame(width: 440, height: 240, alignment: .topLeading)
         .background(mockChatBackground)
+    }
+
+    private func thinkingDots(tint: Color) -> some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(tint.opacity(0.9))
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(model.showThinkingDots ? 1.0 : 0.6)
+                    .opacity(model.showThinkingDots ? 1 : 0.4)
+                    .animation(
+                        .easeInOut(duration: 0.5).repeatForever().delay(Double(index) * 0.18),
+                        value: model.showThinkingDots
+                    )
+            }
+        }
     }
 
     private func mockChatHeader(_ ai: IntroAI) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: ai.systemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(ai.tint.opacity(0.9)))
+            aiBadge(ai, size: 24)
             Text(ai.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
@@ -557,22 +708,44 @@ private struct IntroOverlayView: View {
                     .fill(.white.opacity(0.7))
                     .frame(width: 2, height: 16)
                 Spacer(minLength: 0)
+                if let keyHint = model.keyHint {
+                    keyChip(keyHint)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(0.07))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(.white.opacity(0.14), lineWidth: 1)
-                    )
-            )
+            .background(mockInputBackground(ai))
             Image(systemName: "arrow.up.circle.fill")
                 .font(.system(size: 24))
                 .foregroundStyle(ai.tint)
         }
         .padding(14)
+    }
+
+    private func mockInputBackground(_ ai: IntroAI) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(model.promptHighlight ? ai.tint.opacity(0.20) : .white.opacity(0.07))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(model.promptHighlight ? ai.tint.opacity(0.6) : .white.opacity(0.14), lineWidth: 1)
+            )
+    }
+
+    private func keyChip(_ label: String) -> some View {
+        Text(label)
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(.white.opacity(0.18))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(.white.opacity(0.3), lineWidth: 1)
+                    )
+            )
+            .scaleEffect(model.keyPressed ? 0.8 : 1.0)
     }
 
     private var mockChatBackground: some View {
@@ -583,32 +756,6 @@ private struct IntroOverlayView: View {
                     .stroke(.white.opacity(0.10), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.45), radius: 30, y: 14)
-    }
-
-    private func adviceBubble(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.32))
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
-                Text("where-to-vibe")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-            }
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(.white)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(width: 300, alignment: .leading)
-        .background(cardBackground)
     }
 
     // MARK: Finale

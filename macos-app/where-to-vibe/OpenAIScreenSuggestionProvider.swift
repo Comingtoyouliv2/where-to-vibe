@@ -250,11 +250,14 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
     private func modelName(for mode: SuggestionMode) -> String {
         switch mode {
         case .localHeuristic:
+            // localHeuristic never actually calls OpenAI (it uses on-device
+            // templates), so this value is effectively unused.
             return "gpt-4.1-mini"
-        case .fastAI:
-            return "gpt-4.1-mini"
-        case .highQualityAI:
-            return "gpt-4.1"
+        case .fastAI, .highQualityAI:
+            // The menu no longer exposes a model picker, and "I connected my
+            // key" should just give the user the good model. Both AI modes use
+            // gpt-5.4-mini.
+            return "gpt-5.4-mini"
         }
     }
 
@@ -274,18 +277,28 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         let outputLanguage = language == .korean ? "Korean" : "English"
         let previousPrompt = memory.lastAcceptedPrompt ?? "none"
         let styleNote = language == .korean
-            ? "한국어 형태소와 구어체를 잘 해석하라. '하고 싶어', '만들고 싶어', '고쳐줘', '뭘 해야 하지' 같은 표현을 의도 신호로 읽고, 한국어로 짧고 자연스럽게 말하라."
+            ? """
+            한국어로 답하되, 영어 직역체(번역 말투)를 절대 쓰지 마라. 한국 개발자가 친한
+              동료에게 말하듯 자연스럽고 짧은 구어체로 써라.
+              · 딱딱한 문어체('~하십시오', '~하시기 바랍니다') 금지. '~해보세요 / ~하면
+                좋아요 / ~이에요' 같은 부드러운 말투.
+              · 영어 전문용어(goal, verify-by, acceptance criteria, axis 등)를 그대로
+                두지 말고 자연스러운 한국어로 풀어 써라(꼭 필요하면 괄호로 원어 병기).
+              · '하고 싶어 / 만들고 싶어 / 고쳐줘 / 뭘 해야 하지' 같은 표현을 의도 신호로 읽어라.
+              · 어색하면 소리 내어 읽었을 때 자연스러운지 스스로 점검하라.
+              좋은 톤 예시: "이거 누구를 위한 거예요? 핵심 기능 하나만 먼저 정하면 훨씬 또렷해져요."
+            """
             : "Write in concise, natural English."
         let qualityNote: String
         if mode == .fastAI {
             qualityNote = "Prefer a fast, practical move over perfect completeness."
         } else if hasScreenSnapshot {
-            qualityNote = "Use the visible screen carefully. Reuse concrete nouns from the screen so the move is unmistakably about THIS work, not a template."
+            qualityNote = "Ground every word in the user's DRAFT. The screenshot is only for the surrounding tool/app context — never take the subject or domain from it. Only reuse a screen noun if it is obviously part of the same task as the draft."
         } else {
             qualityNote = "No screenshot is attached. Make the advice specific to the draft text and the current app instead of waiting for visual context."
         }
         let screenshotNote = hasScreenSnapshot
-            ? "A screenshot is available. Use it for concrete nouns, but do not overfit to unrelated code or output."
+            ? "A screenshot is available, but it may contain content UNRELATED to the draft (other tabs, ads, other windows). Treat the DRAFT as the source of truth for what the user wants. Use the screenshot ONLY for the surrounding tool/app — never to choose the subject or domain."
             : "No screenshot is available. Do NOT require screen-specific nouns; coach from the draft, frontmost app, and local signals."
 
         // Level-specific hard constraints. The model is told what intents it is
@@ -309,6 +322,14 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         - Silence is a valid answer only when the draft is already actionable.
           If the draft exists and local signals say it is vague or needs guidance, prefer
           one small coaching move over silence.
+        - Be PROACTIVE and CONTEXT-AWARE. Read what they are actually writing, and use the
+          RELEVANT on-screen context (which tool/app they're in, the visible task) to tailor
+          your help. Make it obvious you understood THEIR specific situation — reference
+          their actual topic in your own words, never generic boilerplate.
+        - When the idea is underspecified, the MOST helpful move is usually to ASK 1–2 sharp
+          questions that force the key decisions — who it's for, the scope, the one core
+          thing, a hard constraint, what "done" looks like — rather than guessing a rewrite.
+          A good question is one you could NOT have asked without reading their draft.
 
         # What you can see
         \(screenshotNote)
@@ -326,19 +347,37 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         Guidance: \(guidance.reason ?? "none")
         Limitation note: \(guidance.limitationNote ?? "none")
 
+        # Grounding (NON-NEGOTIABLE — this is what makes your advice accurate)
+        - The user's DRAFT is the ONLY source of truth for WHAT they are building.
+        - NEVER introduce a topic, product type, genre, or domain word that is not
+          present in the draft. Example of the failure to avoid: the draft says
+          "부트캠프" (a bootcamp — about learning / getting a job) and you reply with
+          "로맨스소설 부트캠프 플랫폼". Romance novels have nothing to do with the draft.
+          Do not stitch unrelated nouns together. Stay strictly on the draft's topic.
+        - The screenshot may show content unrelated to the draft (other tabs, ads,
+          windows). If a screen noun is not clearly part of the SAME task as the
+          draft, IGNORE it completely.
+        - If the draft is too vague to even know the subject, choose ask_one_question
+          and ask what they want to build. Do NOT guess or invent a subject.
+
         # Think before you respond (do NOT output this thinking)
-        1) If a screenshot is attached, name up to 3 concrete nouns I could point at
-           (a file name, a button label, an error string, a function name). If no
-           screenshot is attached, skip this and use the draft text.
-        2) What is the user's draft actually trying to do? Quote up to 10 words from
-           it back to yourself.
+        1) First, restate in one sentence what the user's DRAFT is trying to do, using
+           ONLY words/concepts that appear in the draft. Quote up to 10 words from it.
+        2) Only if a screenshot is attached AND it clearly shows the SAME task, you may
+           note up to 2 concrete nouns from it (a file name, button, error string).
+           If the screen looks unrelated to the draft, skip this entirely.
         3) What is the SMALLEST move that would make their next AI message better?
            Possible moves:
              - tighten_draft     — they're close. Rewrite into a sharper version.
              - fill_missing_axis — one or two axes (goal / done-when / verify-by /
                                    constraints / target user) are missing. Add them.
-             - ask_one_question  — you genuinely need one piece of info to coach well.
-                                   Ask ONE question. Never a list.
+             - ask_one_question  — the draft is underspecified. Ask 1–2 SHARP, specific
+                                   questions that surface the key decisions, phrased with
+                                   THEIR exact topic so it's clear you read it.
+                                   Good (context-aware): draft "부트캠프 만들고 싶어" →
+                                   "어떤 분야 부트캠프예요? 누구를 위한 거고, 끝나면 뭘 할 수
+                                   있게 되나요?"  Bad (generic, ignore-able): "무엇을 만들고
+                                   싶나요?"  Never ask more than 2 questions.
              - point_at_wrong_tool — they're in the wrong app for this task (e.g.
                                    chat-only when they need filesystem context).
                                    Name the right tool.

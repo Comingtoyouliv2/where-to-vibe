@@ -26,8 +26,15 @@ final class SuggestionAcceptController {
     var dismiss: (() -> Void)?
     var observeKeyInput: ((ObservedKeyInput) -> Void)?
 
-    func start() {
-        guard eventTap == nil else { return }
+    /// Creates the Tab/Esc CGEvent tap. Returns true if the tap is up (newly
+    /// created or already running), false if creation failed. The caller MUST
+    /// use this result to decide whether key handling is really active —
+    /// otherwise a transient failure (e.g. a TCC trust race right after launch
+    /// or a rebuild) leaves us thinking we're handling keys when no tap exists,
+    /// and we never retry.
+    @discardableResult
+    func start() -> Bool {
+        guard eventTap == nil else { return true }  // already running
 
         let monitoredTypes: [CGEventType] = [.keyDown, .keyUp]
         let eventMask = monitoredTypes.reduce(CGEventMask(0)) { mask, type in
@@ -50,19 +57,21 @@ final class SuggestionAcceptController {
             callback: callback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            print("PromptCoach: could not create key event tap. Accessibility may be missing.")
-            return
+            print("PromptCoach: could not create key event tap (will retry). Accessibility may not be ready yet.")
+            return false
         }
 
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, createdTap, 0) else {
             CFMachPortInvalidate(createdTap)
-            return
+            return false
         }
 
         eventTap = createdTap
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: createdTap, enable: true)
+        print("PromptCoach: key event tap created — Tab-to-copy is active.")
+        return true
     }
 
     func stop() {
@@ -111,7 +120,9 @@ final class SuggestionAcceptController {
         switch keyCode {
         case tabKeyCode:
             if eventType == .keyDown {
-                guard canAcceptWithTab?() == true else {
+                let canAccept = canAcceptWithTab?() == true
+                print("⌨️[TabCopy] Tab keydown reached the tap — canAcceptWithTab=\(canAccept)")
+                guard canAccept else {
                     isConsumingTabPress = false
                     return Unmanaged.passUnretained(event)
                 }

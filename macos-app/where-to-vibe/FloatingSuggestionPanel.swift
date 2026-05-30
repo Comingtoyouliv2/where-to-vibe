@@ -363,7 +363,7 @@ struct FloatingSuggestionPanelView: View {
 
             if typingModel.hasFinished {
                 HStack(spacing: 8) {
-                    if appState.selectedSuggestion?.canAcceptWithTab == true {
+                    if hasCopyableAdvice {
                         acceptAffordance
                     }
                     Text("Esc")
@@ -410,19 +410,27 @@ struct FloatingSuggestionPanelView: View {
 
     // Renders the accept hint only for suggestions that are safe to insert into
     // the user's focused draft. Advisory cards are read-only and dismiss with Esc.
+    /// True when there's something Tab can copy — mirrors the controller's
+    /// `copyableAdviceText`: the rewrite (`text`) if present, else the reason.
+    private var hasCopyableAdvice: Bool {
+        guard let suggestion = appState.selectedSuggestion else { return false }
+        if !suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let reason = (appState.lastReason ?? suggestion.reason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !reason.isEmpty
+    }
+
     @ViewBuilder
     private var acceptAffordance: some View {
-        let intent = appState.selectedSuggestion?.intent ?? .tightenDraft
-        switch intent {
-        case .tightenDraft, .fillMissingAxis:
-            KeyCap("Tab")
-            Text("copy")
-        case .graduateToAgent:
-            KeyCap("Tab")
-            Text("copy")
-        case .askOneQuestion, .pointAtWrongTool, .staySilent:
-            EmptyView()
-        }
+        // Tab now copies whatever advice is on screen (the rewrite, or the
+        // reason/question when there's no rewrite), so always show the hint
+        // when a suggestion is up — including question-style advice. This is
+        // why the "Tab" hint had disappeared: question intents used to render
+        // EmptyView here.
+        KeyCap("Tab")
+        Text("copy")
     }
 
     private var coachGlyph: some View {
