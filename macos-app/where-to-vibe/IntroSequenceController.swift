@@ -96,7 +96,8 @@ final class IntroSequenceController {
         withAnimation(.easeOut(duration: 0.45)) { model.chatOpacity = 1 }
         await typeText(Self.introText)
         if Task.isCancelled { return }
-        await sleep(1.0)
+        // Keep the finished introduction on screen ~5s before moving on.
+        await sleep(5.0)
 
         // 2) Fade the chat card out, reveal the fake cursor at center.
         withAnimation(.easeIn(duration: 0.35)) { model.chatOpacity = 0 }
