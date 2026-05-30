@@ -326,10 +326,16 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
           RELEVANT on-screen context (which tool/app they're in, the visible task) to tailor
           your help. Make it obvious you understood THEIR specific situation — reference
           their actual topic in your own words, never generic boilerplate.
-        - When the idea is underspecified, the MOST helpful move is usually to ASK 1–2 sharp
-          questions that force the key decisions — who it's for, the scope, the one core
-          thing, a hard constraint, what "done" looks like — rather than guessing a rewrite.
-          A good question is one you could NOT have asked without reading their draft.
+        - When the idea is underspecified, DON'T just interrogate. Your DEFAULT is to MODEL a
+          concrete better version — the spirit of "저라면 이렇게 써볼 것 같아요": write the
+          improved prompt yourself, filling the missing pieces (who it's for, scope, the one
+          core thing, a constraint, what "done" looks like) with reasonable assumptions, and
+          briefly state those assumptions (e.g. "혼자 쓰는 용도라고 가정하면"). The user can
+          Tab-copy it. Prefer the tighten_draft / fill_missing_axis intents (which carry a
+          rewrite) over ask_one_question.
+        - Ask a question ONLY when a detail is load-bearing AND you genuinely cannot make a
+          reasonable assumption. Even then, ask at most one — and still offer your best draft
+          alongside it. A good question is one you could NOT have asked without reading their draft.
 
         # What you can see
         \(screenshotNote)
