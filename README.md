@@ -53,7 +53,31 @@ Focus on the core workflow first: detect focused text, suggest a concrete rewrit
 and let the user accept it with Tab.
 ```
 
-## Setup
+## Download (macOS)
+
+Grab the prebuilt app — no Xcode required.
+
+> **Demo build.** This release is **not yet notarized by Apple**, so macOS
+> Gatekeeper needs one manual approval on first launch (step 3 below).
+
+1. Download the latest build:
+   **[Where-to-vibe.zip](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)**
+   — or browse all
+   [Releases](https://github.com/Comingtoyouliv2/where-to-vibe/releases).
+2. Unzip it and move **`Where-to-vibe.app`** into your `/Applications` folder.
+3. Because the build is unsigned, clear the download quarantine once. Open
+   **Terminal** and run:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Where-to-vibe.app
+   ```
+4. Open the app. It lives in the **menu bar** (no Dock icon — `LSUIElement`).
+   On first launch a short tutorial walks you through granting
+   **Accessibility** permission: when System Settings opens, just flip the
+   `Where-to-vibe` switch on. That's the only click you need.
+
+Requirements: macOS 14.2+ (Apple Silicon or Intel).
+
+## Build from source (developers)
 
 Requirements:
 

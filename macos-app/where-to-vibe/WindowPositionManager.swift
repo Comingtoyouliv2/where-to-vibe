@@ -60,10 +60,59 @@ class WindowPositionManager {
         return presentationDestination
     }
 
-    /// Opens System Settings to the Accessibility pane.
+    /// Opens System Settings to the Accessibility pane and activates it, so the
+    /// pane comes to the front instead of opening behind the editor/other
+    /// windows the app was launched from.
     static func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
-        NSWorkspace.shared.open(url)
+        let openConfiguration = NSWorkspace.OpenConfiguration()
+        openConfiguration.activates = true
+        NSWorkspace.shared.open(url, configuration: openConfiguration)
+    }
+
+    /// Pulls the System Settings app to the very front. Useful as a follow-up to
+    /// `openAccessibilitySettings()` because Settings can take a beat to finish
+    /// launching before it will accept activation, leaving it stuck behind other
+    /// windows on the first try.
+    static func bringSystemSettingsToFront() {
+        let systemSettingsBundleIDs: Set<String> = ["com.apple.systempreferences"]
+        for runningApplication in NSWorkspace.shared.runningApplications
+        where systemSettingsBundleIDs.contains(runningApplication.bundleIdentifier ?? "") {
+            runningApplication.activate(options: [.activateIgnoringOtherApps])
+        }
+    }
+
+    /// Best-effort screen frame (global, top-left origin) of the System Settings
+    /// window, so onboarding can point the user at it. Reads the public window
+    /// list, which exposes each window's owning app and bounds WITHOUT Screen
+    /// Recording permission (only window titles/contents are gated). Returns the
+    /// largest matching window, or nil if Settings isn't on screen yet.
+    static func systemSettingsWindowFrame() -> CGRect? {
+        let windowListOptions: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowInfoList = CGWindowListCopyWindowInfo(windowListOptions, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        var largestMatchingWindowFrame: CGRect?
+        for windowInfo in windowInfoList {
+            guard let owningApplicationName = windowInfo[kCGWindowOwnerName as String] as? String,
+                  owningApplicationName == "System Settings" || owningApplicationName == "System Preferences" else {
+                continue
+            }
+            guard let windowBoundsDictionary = windowInfo[kCGWindowBounds as String] as? NSDictionary,
+                  let windowFrame = CGRect(dictionaryRepresentation: windowBoundsDictionary as CFDictionary) else {
+                continue
+            }
+            // Skip tiny helper/panel windows; we want the main settings window.
+            guard windowFrame.width > 300, windowFrame.height > 200 else { continue }
+
+            let currentArea = windowFrame.width * windowFrame.height
+            let bestAreaSoFar = (largestMatchingWindowFrame?.width ?? 0) * (largestMatchingWindowFrame?.height ?? 0)
+            if currentArea > bestAreaSoFar {
+                largestMatchingWindowFrame = windowFrame
+            }
+        }
+        return largestMatchingWindowFrame
     }
 
     /// Reveals the running app bundle in Finder so the user can drag it into

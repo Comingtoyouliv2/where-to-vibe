@@ -8,10 +8,10 @@
 //   1. A chat card types a short introduction.
 //   2. The user picks which AI they use (Claude / Codex / GPT) — clickable.
 //   3. A SIMULATED chat window for that AI appears (mock, in our overlay).
-//   4. The companion "types" a vague prompt ("앱을 만들어줘") into it.
+//   4. The companion "types" a vague prompt ("make me an app") into it.
 //   5. A SIMULATED advice bubble appears inside the tutorial overlay.
 //      The live mouse-side coach starts only after the tutorial fully finishes.
-//   6. A finale chat ("같이 함께 만들어봐요") wraps it up.
+//   6. A finale chat ("Let's build it together") wraps it up.
 //
 //  Everything is simulated inside our own transparent overlay window — no
 //  external app is launched and the user's real cursor/focus is never touched.
@@ -185,24 +185,24 @@ final class IntroSequenceController {
         // 5.5) Waiting beat — this is still tutorial-only. The live coach is
         // not running during the intro, so no real mouse-side advice appears.
         model.showThinkingDots = true
-        model.demoCaption = "조금만 기다리면…"
+        model.demoCaption = "One moment…"
         await sleep(2.0)
         if Task.isCancelled { return }
 
         // 6) Simulated advice arrives inside the tutorial overlay.
         model.showThinkingDots = false
-        model.demoCaption = "이런 식으로 조언을 보여줘요"
+        model.demoCaption = "This is how I'll show advice"
         model.showAdvice = true
         withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { model.adviceOpacity = 1 }
         await sleep(7.0)
         if Task.isCancelled { return }
 
         // 6.5) Tab → copy → paste motion, still simulated inside tutorial.
-        model.demoCaption = "마음에 들면 Tab으로 복사해요"
+        model.demoCaption = "Like it? Press Tab to copy"
         model.keyHint = "Tab"
         await pressKeyChip()
         if Task.isCancelled { return }
-        model.demoCaption = "복사됐어요. 이제 붙여넣기"
+        model.demoCaption = "Copied. Now paste it"
         model.keyHint = "⌘V"
         await pressKeyChip()
         if Task.isCancelled { return }
@@ -256,9 +256,9 @@ final class IntroSequenceController {
         await sleep(0.55)
         if Task.isCancelled { return }
 
-        // 12) "우리는 여기 있어요" bubble, just below the menu bar button.
+        // 12) "We live up here" bubble, just below the menu bar button.
         model.bubblePosition = CGPoint(x: target.x, y: target.y + 36)
-        model.bubbleText = "우리는 여기 있어요! ✨"
+        model.bubbleText = "We live up here! ✨"
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { model.bubbleOpacity = 1 }
         await sleep(3.5)
         if Task.isCancelled { return }
@@ -288,23 +288,28 @@ final class IntroSequenceController {
     private func guideAccessibilityGrantIfNeeded(on screen: NSScreen) async {
         guard !WindowPositionManager.hasAccessibilityPermission() else { return }
 
-        model.bubbleText = "마지막으로 권한 하나만 켜면 끝이에요.\n제가 설정 창을 열어드릴게요 👇"
+        model.bubbleText = "One last thing — just turn on a single permission.\nI'll open the settings window for you 👇"
         await sleep(2.6)
         if Task.isCancelled { return }
 
-        // Pre-list the app and open the Accessibility pane. Our transparent,
-        // click-through overlay stays on top so the bubble guides the user while
-        // they interact with the real Settings window underneath.
+        // Pre-list the app and open the Accessibility pane, then pull System
+        // Settings to the very front so it never opens behind the editor/other
+        // windows. Settings needs a beat to launch before it accepts
+        // activation, so we nudge it twice.
         accessibilityOnboarder.registerAndOpenSettings()
-        await sleep(0.9)
+        await sleep(0.8)
+        WindowPositionManager.bringSystemSettingsToFront()
+        await sleep(0.5)
+        if Task.isCancelled { return }
+        WindowPositionManager.bringSystemSettingsToFront()
+        await sleep(0.3)
         if Task.isCancelled { return }
 
-        // Park the instruction bubble near the top-center as a persistent hint.
-        withAnimation(.easeInOut(duration: 0.35)) {
-            model.bubblePosition = CGPoint(x: screen.frame.width / 2, y: 96)
-            model.bubbleOpacity = 1
-        }
-        model.bubbleText = "열린 설정 창에서 'Where-to-vibe' 스위치를 켜주세요.\n딱 한 번만 누르면 됩니다 ✨"
+        // Point the tutorial cursor right at the System Settings window so the
+        // user's eye lands where the toggle is, with the instruction bubble
+        // anchored beside it.
+        pointCursorAtSystemSettings(on: screen)
+        model.bubbleText = "Find 'Where-to-vibe' in this window\nand flip its switch on — just one tap! ✨"
 
         // Wait for the toggle. AXIsProcessTrusted() reflects the change live, so
         // the user never has to quit or relaunch the app.
@@ -313,13 +318,75 @@ final class IntroSequenceController {
             await sleep(0.4)
         }
 
-        // Granted — bring our overlay back to the front and celebrate briefly
-        // before the tutorial hands off to the live coach.
+        // Granted — stop the pulsing pointer, bring our overlay back to the
+        // front, and celebrate briefly before handing off to the live coach.
+        withAnimation(.easeOut(duration: 0.25)) {
+            model.showClickPulse = false
+            model.clickPulseOpacity = 0
+        }
         NSApp.activate(ignoringOtherApps: true)
         overlayWindow?.orderFrontRegardless()
-        model.bubbleText = "완료! 🎉 이제 같이 시작해요."
+        model.bubbleText = "All set! 🎉 Let's get started."
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { model.bubbleOpacity = 1 }
         await sleep(2.2)
+    }
+
+    /// Flies the tutorial cursor to the System Settings window and parks a
+    /// pulsing ring on it, with the instruction bubble anchored just above, so
+    /// the user is pointed at where to flip the toggle. Falls back to a
+    /// top-center bubble if the window can't be located (e.g. it opened on
+    /// another display).
+    private func pointCursorAtSystemSettings(on screen: NSScreen) {
+        let fallbackBubblePosition = CGPoint(x: screen.frame.width / 2, y: 96)
+
+        guard let settingsFrameGlobal = WindowPositionManager.systemSettingsWindowFrame() else {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                model.bubblePosition = fallbackBubblePosition
+                model.bubbleOpacity = 1
+            }
+            return
+        }
+
+        // CGWindowList bounds are global with a top-left origin (y grows down),
+        // which matches our overlay's local coordinate space on the main screen
+        // the overlay is built on.
+        let settingsFrameLocal = CGRect(
+            x: settingsFrameGlobal.origin.x - screen.frame.minX,
+            y: settingsFrameGlobal.origin.y,
+            width: settingsFrameGlobal.width,
+            height: settingsFrameGlobal.height
+        )
+
+        // Aim at the right side of the window, where the per-app toggle switches
+        // sit in the Accessibility list.
+        let pointerTarget = CGPoint(
+            x: settingsFrameLocal.maxX - 70,
+            y: settingsFrameLocal.minY + min(settingsFrameLocal.height * 0.4, 240)
+        )
+
+        model.showCursor = true
+        model.cursorOpacity = 1
+        withAnimation(.easeInOut(duration: 0.9)) {
+            model.cursorPosition = pointerTarget
+        }
+        // A slow breathing ring draws the eye to the toggle area.
+        model.clickPulseScale = 0.7
+        model.clickPulseOpacity = 0.9
+        model.showClickPulse = true
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+            model.clickPulseScale = 1.7
+            model.clickPulseOpacity = 0.3
+        }
+
+        // Bubble above the window so it never covers the toggles themselves.
+        let bubblePosition = CGPoint(
+            x: settingsFrameLocal.midX,
+            y: max(60, settingsFrameLocal.minY - 30)
+        )
+        withAnimation(.easeInOut(duration: 0.35)) {
+            model.bubblePosition = bubblePosition
+            model.bubbleOpacity = 1
+        }
     }
 
     /// Converts the menu bar button's screen frame (AppKit, bottom-left origin)
@@ -367,29 +434,29 @@ final class IntroSequenceController {
     }
 
     private static let introText = """
-    안녕하세요 👋
+    Hi there 👋
 
-    저는 당신의 AI Companion입니다. AI 자체는 배우지 않아도 되지만,
+    I'm your AI companion. You don't need to master the AI itself —
 
-    AI와 효과적으로 협업하는 방법은
-    배워야 합니다.
+    but you do need to learn how to
+    collaborate with it effectively.
 
-    더 좋은 질문을 만드는 법,
-    아이디어를 제품으로 발전시키는 법,
-    AI를 활용해 창작하는 법을 함께 배웁니다.
+    Together we'll learn how to ask better questions,
+    grow an idea into a real product,
+    and create with AI.
 
-    당신의 첫 아이디어를 들려주세요.
+    Tell me your first idea.
     """
 
-    private static let demoPrompt = "앱을 만들어줘"
+    private static let demoPrompt = "make me an app"
     private static let demoRefinedPrompt = """
-    혼자 쓰는 데일리 할 일 앱의 첫 MVP를 만들어줘.
+    Build the first MVP of a personal daily to-do app.
 
-    대상: 매일 아침 오늘 할 일을 3~7개만 정리하고 싶은 개인 사용자.
-    첫 화면: 오늘 날짜, 할 일 입력창, 오늘의 할 일 리스트, 완료된 항목 접기 영역.
-    핵심 기능: 할 일 추가/완료 체크/삭제, 완료율 표시, 앱을 껐다 켜도 오늘 목록 유지.
-    제약: macOS SwiftUI 앱으로 만들고, 외부 서버 없이 UserDefaults나 로컬 저장소만 사용.
-    완료 기준: 새 할 일을 추가하면 즉시 리스트에 보이고, 체크하면 완료 영역으로 이동하며, 재실행 후에도 상태가 남아 있어야 함.
+    Target user: someone who wants to line up just 3–7 things to do each morning.
+    First screen: today's date, a task input field, today's task list, and a collapsible "done" section.
+    Core features: add / check off / delete tasks, a completion-rate indicator, and keep today's list after quitting and relaunching.
+    Constraints: build it as a macOS SwiftUI app with no external server — use UserDefaults or local storage only.
+    Done when: a new task appears instantly, checking it moves it to the done section, and state survives a relaunch.
     """
 }
 
@@ -433,7 +500,7 @@ final class IntroSequenceModel: ObservableObject {
     @Published var showFinale: Bool = false
     @Published var finaleOpacity: Double = 0
 
-    // Menu-bar pointer ("우리는 여기 있어요")
+    // Menu-bar pointer ("We live up here")
     @Published var showCursor: Bool = false
     @Published var cursorOpacity: Double = 1
     @Published var cursorPosition: CGPoint = .zero
@@ -565,10 +632,10 @@ private struct IntroOverlayView: View {
 
     private var choiceCard: some View {
         VStack(spacing: 16) {
-            Text("어떤 AI를 사용하세요?")
+            Text("Which AI do you use?")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
-            Text("Claude를 클릭해보세요.")
+            Text("Try clicking Claude.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.6))
 
@@ -581,7 +648,7 @@ private struct IntroOverlayView: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 10, weight: .bold))
-                Text("여기를 클릭해보세요")
+                Text("Click here")
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundStyle(.white.opacity(0.72))
@@ -675,7 +742,7 @@ private struct IntroOverlayView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
             }
-            Text("\"앱을 만들어줘\"는 너무 막연해요. 대상 사용자, 첫 화면, 핵심 기능, 저장 방식, 완료 기준을 넣으면 AI가 바로 구현 계획을 세울 수 있어요.")
+            Text("\"make me an app\" is too vague. Add the target user, first screen, core features, how it's stored, and what \"done\" means — then the AI can plan the build right away.")
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
                 .lineSpacing(4)
@@ -683,7 +750,7 @@ private struct IntroOverlayView: View {
 
             Divider().overlay(.white.opacity(0.15))
 
-            Text("이렇게 써보세요")
+            Text("Try writing it like this")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.6))
             Text(refinedPrompt)
@@ -701,7 +768,7 @@ private struct IntroOverlayView: View {
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(.white.opacity(0.16))
                     )
-                Text("눌러서 복사")
+                Text("press to copy")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.55))
             }
@@ -852,10 +919,10 @@ private struct IntroOverlayView: View {
         VStack(spacing: 10) {
             Text("✨")
                 .font(.system(size: 34))
-            Text("같이 함께 만들어봐요")
+            Text("Let's build it together")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.white)
-            Text("당신의 첫 아이디어를 입력창에 적어보세요.")
+            Text("Type your first idea into any input field.")
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.7))
         }
