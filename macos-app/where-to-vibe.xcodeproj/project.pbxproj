@@ -9,10 +9,6 @@
 /* Begin PBXBuildFile section */
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
 		AA00BB062F6500060039DA55 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB052F6500050039DA55 /* PostHog */; };
-		CD854E582FC664B500639D54 /* AutoCoachObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD854E552FC664B500639D54 /* AutoCoachObserver.swift */; };
-		CD854E592FC664B500639D54 /* CoachAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD854E562FC664B500639D54 /* CoachAPIClient.swift */; };
-		CD854E5A2FC664B500639D54 /* NudgeBubbleWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD854E572FC664B500639D54 /* NudgeBubbleWindow.swift */; };
-		CDCC44B12FC67FDE00D936F1 /* TabKeyInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCC44B02FC67FDE00D936F1 /* TabKeyInterceptor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,15 +32,24 @@
 		28F22CBF2F56440300A0FC59 /* Where-to-vibe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Where-to-vibe.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CCC2F56440300A0FC59 /* where-to-vibeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "where-to-vibeTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CD62F56440300A0FC59 /* where-to-vibeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "where-to-vibeUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		CD854E552FC664B500639D54 /* AutoCoachObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutoCoachObserver.swift; path = "where-to-vibe/AutoCoachObserver.swift"; sourceTree = "<group>"; };
-		CD854E562FC664B500639D54 /* CoachAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CoachAPIClient.swift; path = "where-to-vibe/CoachAPIClient.swift"; sourceTree = "<group>"; };
-		CD854E572FC664B500639D54 /* NudgeBubbleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NudgeBubbleWindow.swift; path = "where-to-vibe/NudgeBubbleWindow.swift"; sourceTree = "<group>"; };
-		CDCC44B02FC67FDE00D936F1 /* TabKeyInterceptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TabKeyInterceptor.swift; path = "where-to-vibe/TabKeyInterceptor.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CD0000012FCB000100000001 /* Exceptions for "where-to-vibe" folder in "where-to-vibe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 28F22CBE2F56440300A0FC59 /* where-to-vibe */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		28F22CC12F56440300A0FC59 /* where-to-vibe */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CD0000012FCB000100000001 /* Exceptions for "where-to-vibe" folder in "where-to-vibe" target */,
+			);
 			path = "where-to-vibe";
 			sourceTree = "<group>";
 		};
@@ -90,10 +95,6 @@
 		28F22CB62F56440300A0FC59 = {
 			isa = PBXGroup;
 			children = (
-				CD854E552FC664B500639D54 /* AutoCoachObserver.swift */,
-				CDCC44B02FC67FDE00D936F1 /* TabKeyInterceptor.swift */,
-				CD854E562FC664B500639D54 /* CoachAPIClient.swift */,
-				CD854E572FC664B500639D54 /* NudgeBubbleWindow.swift */,
 				28F22CC12F56440300A0FC59 /* where-to-vibe */,
 				28F22CCF2F56440300A0FC59 /* where-to-vibeTests */,
 				28F22CD92F56440300A0FC59 /* where-to-vibeUITests */,
@@ -261,10 +262,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				CD854E582FC664B500639D54 /* AutoCoachObserver.swift in Sources */,
-				CDCC44B12FC67FDE00D936F1 /* TabKeyInterceptor.swift in Sources */,
-				CD854E592FC664B500639D54 /* CoachAPIClient.swift in Sources */,
-				CD854E5A2FC664B500639D54 /* NudgeBubbleWindow.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -81,9 +81,9 @@ final class MenuBarController: NSObject {
         guard panel == nil else { return }
 
         let rootView = SettingsView(appState: appState)
-            .frame(width: 330)
+            .frame(width: 370)
         let hostingView = NSHostingView(rootView: rootView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 330, height: 770)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 370, height: 770)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -106,7 +106,7 @@ final class MenuBarController: NSObject {
 
     private func positionPanel() {
         guard let panel, let buttonWindow = statusItem?.button?.window else { return }
-        let size = panel.contentView?.fittingSize ?? CGSize(width: 330, height: 310)
+        let size = panel.contentView?.fittingSize ?? CGSize(width: 370, height: 520)
         let origin = CGPoint(
             x: buttonWindow.frame.midX - size.width / 2,
             y: buttonWindow.frame.minY - size.height - 6

@@ -9,7 +9,8 @@
 //
 //      {
 //        "mode":    "prompt_coach" | "vague_build_me" |
-//                   "error_first_cause" | "diff_review" | "none",
+//                   "empty_context_next_step" | "error_first_cause" |
+//                   "diff_review" | "none",
 //        "nudge":   "<= 2 sentence advice, plain text",
 //        "rewrite": "optional better prompt (string) — may be missing",
 //        "checks":  ["how to verify success", ...] | null,
@@ -63,12 +64,18 @@ struct CoachClientHints: Encodable {
     /// Used by the worker to skip the model when it's obvious (e.g. Terminal →
     /// error_first_cause is likely).
     let frontmostBundleID: String?
+    /// Human-readable app name, useful when bundle IDs are unavailable or when
+    /// the worker wants to infer AI-chat contexts from app names.
+    let frontAppName: String?
     /// True when the visible AI-chat input had stable text for ≥ 3-4s.
     let typingPaused: Bool?
+    /// Why the client fired the request. `idle` lets the worker know this may
+    /// be a proactive next-step suggestion rather than a user-requested answer.
+    let triggerSource: String?
 
     enum CodingKeys: String, CodingKey {
         case frontmostBundleID = "frontmostBundleId"
-        case typingPaused
+        case frontAppName, typingPaused, triggerSource
     }
 }
 

@@ -7,21 +7,40 @@ private final class PromptCoachPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private enum FloatingSuggestionLayout {
+    static let panelWidth: CGFloat = 420
+    static let contentWidth: CGFloat = 398
+    static let minimumHeight: CGFloat = 120
+    static let fallbackHeight: CGFloat = 260
+    static let screenPadding: CGFloat = 10
+    static let maximumScreenHeightRatio: CGFloat = 0.86
+}
+
+private enum FloatingSuggestionVerticalPlacement {
+    case below
+    case above
+}
+
+private enum FloatingSuggestionHorizontalPlacement {
+    case right
+    case left
+}
+
 @MainActor
 final class FloatingSuggestionPanel {
     private let appState: AppState
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
-    private let panelSize = CGSize(width: 360, height: 260)
 
-    // Cursor-follow: while the panel is visible, a 60Hz timer eases the panel
-    // toward the mouse so it glides with the cursor instead of jumping to a
-    // new spot each time the advice updates.
+    // The panel follows the user's mouse, but the side it appears on is locked
+    // when the suggestion opens. Re-deciding above/below every frame made it
+    // bounce near screen edges.
     private var cursorFollowTimer: Timer?
     private var smoothedPanelOrigin: CGPoint?
-    /// Per-tick easing factor. Lower = floatier, higher = snappier. 0.18 at
-    /// 60Hz catches up to the cursor in a few frames without feeling rigid.
-    private let cursorFollowEaseFactor: CGFloat = 0.18
+    private var panelAnchor: CGPoint?
+    private var verticalPlacement: FloatingSuggestionVerticalPlacement = .below
+    private var horizontalPlacement: FloatingSuggestionHorizontalPlacement = .right
+    private var renderedPanelHeight: CGFloat = FloatingSuggestionLayout.minimumHeight
 
     init(appState: AppState) {
         self.appState = appState
@@ -43,11 +62,23 @@ final class FloatingSuggestionPanel {
         }
 
         ensurePanel()
-        positionPanel(near: anchor)
-        panel?.orderFrontRegardless()
-        startCursorFollow()
+        let visibleAnchor = normalizedAnchor(anchor)
+        let wasVisible = panel?.isVisible == true
+        if panelAnchor == nil {
+            panelAnchor = visibleAnchor
+        }
+        if !wasVisible {
+            renderedPanelHeight = FloatingSuggestionLayout.minimumHeight
+            lockPlacement(near: panelAnchor ?? visibleAnchor)
+            positionPanel(near: panelAnchor ?? visibleAnchor)
+            panel?.orderFrontRegardless()
+            panel?.displayIfNeeded()
+            startCursorFollow()
+        } else {
+            resizePanel(toContentHeight: renderedPanelHeight, near: currentFollowAnchor())
+        }
         let frame = panel?.frame ?? .zero
-        print("[Coach/Panel] show() at frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.size.width))x\(Int(frame.size.height))) isVisible=\(panel?.isVisible == true)")
+        print("[Coach/Panel] show() anchor=(\(Int(anchor.x)),\(Int(anchor.y))) normalized=(\(Int(visibleAnchor.x)),\(Int(visibleAnchor.y))) frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.size.width))x\(Int(frame.size.height))) isVisible=\(panel?.isVisible == true)")
     }
 
     func hide() {
@@ -55,6 +86,10 @@ final class FloatingSuggestionPanel {
             print("[Coach/Panel] hide() — was visible.")
         }
         stopCursorFollow()
+        panelAnchor = nil
+        verticalPlacement = .below
+        horizontalPlacement = .right
+        renderedPanelHeight = FloatingSuggestionLayout.minimumHeight
         panel?.orderOut(nil)
     }
 
@@ -62,7 +97,9 @@ final class FloatingSuggestionPanel {
         appState.objectWillChange
             .sink { [weak self] _ in
                 Task { @MainActor in
-                    self?.panel?.contentView?.needsLayout = true
+                    await Task.yield()
+                    guard let self else { return }
+                    self.panel?.contentView?.needsLayout = true
                 }
             }
             .store(in: &cancellables)
@@ -71,10 +108,24 @@ final class FloatingSuggestionPanel {
     private func ensurePanel() {
         guard panel == nil else { return }
 
-        let rootView = FloatingSuggestionPanelView(appState: appState)
-            .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
+        let rootView = FloatingSuggestionPanelView(
+            appState: appState,
+            onContentSizeChange: { [weak self] size in
+                Task { @MainActor in
+                    self?.contentSizeDidChange(size)
+                }
+            }
+        )
+            .frame(width: FloatingSuggestionLayout.panelWidth, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
         let hostingView = NSHostingView(rootView: rootView)
-        hostingView.frame = NSRect(origin: .zero, size: panelSize)
+        hostingView.frame = NSRect(
+            origin: .zero,
+            size: CGSize(
+                width: FloatingSuggestionLayout.panelWidth,
+                height: FloatingSuggestionLayout.minimumHeight
+            )
+        )
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
 
@@ -98,16 +149,91 @@ final class FloatingSuggestionPanel {
 
     private func positionPanel(near anchor: CGPoint) {
         guard let panel else { return }
-        let size = panel.contentView?.fittingSize ?? CGSize(width: 360, height: 168)
-        let layoutSize = CGSize(
-            width: max(size.width, panelSize.width),
-            height: max(size.height, panelSize.height)
-        )
-        let origin = panelOrigin(forSize: layoutSize, near: anchor)
+        let visibleAnchor = normalizedAnchor(anchor)
+        let layoutSize = panelSize(forContentHeight: renderedPanelHeight, near: visibleAnchor)
+        let origin = panelOrigin(forSize: layoutSize, near: visibleAnchor)
         panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
-        // Seed the smoothed origin so the follow timer eases from here rather
-        // than snapping on its first tick.
         smoothedPanelOrigin = origin
+    }
+
+    private func contentSizeDidChange(_ size: CGSize) {
+        guard panel?.isVisible == true else { return }
+        let measuredHeight = ceil(size.height)
+        guard measuredHeight.isFinite, measuredHeight > 0 else { return }
+
+        // Grow with the typed content. Do not shrink while visible; shrinking
+        // during the typewriter reset reads as the panel being reloaded.
+        let nextHeight = max(renderedPanelHeight, measuredHeight)
+        guard abs(nextHeight - renderedPanelHeight) > 0.5 else { return }
+        renderedPanelHeight = nextHeight
+        resizePanel(toContentHeight: nextHeight, near: currentFollowAnchor())
+    }
+
+    private func resizePanel(toContentHeight contentHeight: CGFloat, near anchor: CGPoint) {
+        guard let panel, panel.isVisible else { return }
+        let visibleAnchor = normalizedAnchor(anchor)
+        let layoutSize = panelSize(forContentHeight: contentHeight, near: visibleAnchor)
+        let origin = panelOrigin(forSize: layoutSize, near: visibleAnchor)
+        panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
+        smoothedPanelOrigin = origin
+    }
+
+    private func currentFollowAnchor() -> CGPoint {
+        let mouseAnchor = normalizedAnchor(NSEvent.mouseLocation)
+        panelAnchor = mouseAnchor
+        return mouseAnchor
+    }
+
+    private func lockPlacement(near anchor: CGPoint) {
+        let size = panelSize(forContentHeight: renderedPanelHeight, near: anchor)
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
+        let screenFrame = screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
+
+        verticalPlacement = anchor.y - size.height - 10 >= screenFrame.minY + FloatingSuggestionLayout.screenPadding
+            ? .below
+            : .above
+        horizontalPlacement = anchor.x + 18 + size.width <= screenFrame.maxX - FloatingSuggestionLayout.screenPadding
+            ? .right
+            : .left
+    }
+
+    private func normalizedAnchor(_ anchor: CGPoint) -> CGPoint {
+        let screen = NSScreen.screens.first { $0.visibleFrame.insetBy(dx: -160, dy: -160).contains(anchor) }
+            ?? NSScreen.screens.first { $0.frame.insetBy(dx: -160, dy: -160).contains(anchor) }
+            ?? NSScreen.screens.first { $0.visibleFrame.insetBy(dx: -160, dy: -160).contains(NSEvent.mouseLocation) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return NSEvent.mouseLocation }
+
+        let frame = screen.visibleFrame
+        let fallback = frame.contains(NSEvent.mouseLocation)
+            ? NSEvent.mouseLocation
+            : CGPoint(x: frame.midX, y: frame.midY)
+        let candidate = anchor.x.isFinite && anchor.y.isFinite ? anchor : fallback
+
+        return CGPoint(
+            x: min(max(candidate.x, frame.minX + FloatingSuggestionLayout.screenPadding), frame.maxX - FloatingSuggestionLayout.screenPadding),
+            y: min(max(candidate.y, frame.minY + FloatingSuggestionLayout.screenPadding), frame.maxY - FloatingSuggestionLayout.screenPadding)
+        )
+    }
+
+    private func panelSize(forContentHeight contentHeight: CGFloat, near anchor: CGPoint) -> CGSize {
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
+        let screenFrame = screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
+        let maximumHeight = max(
+            FloatingSuggestionLayout.minimumHeight,
+            (screenFrame.height - FloatingSuggestionLayout.screenPadding * 2)
+                * FloatingSuggestionLayout.maximumScreenHeightRatio
+        )
+
+        let fittingHeight = contentHeight.isFinite && contentHeight > 0
+            ? contentHeight
+            : FloatingSuggestionLayout.minimumHeight
+        let clampedHeight = min(
+            maximumHeight,
+            max(FloatingSuggestionLayout.minimumHeight, fittingHeight)
+        )
+        return CGSize(width: FloatingSuggestionLayout.panelWidth, height: clampedHeight)
     }
 
     /// Clamped top-anchored origin for a panel of `size` placed next to
@@ -117,28 +243,35 @@ final class FloatingSuggestionPanel {
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
         let screenFrame = screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
 
-        var origin = CGPoint(x: anchor.x + 18, y: anchor.y - size.height - 10)
-        if origin.x + size.width > screenFrame.maxX - 10 {
-            origin.x = anchor.x - size.width - 18
+        var origin = CGPoint(
+            x: horizontalPlacement == .right
+                ? anchor.x + 18
+                : anchor.x - size.width - 18,
+            y: verticalPlacement == .below
+                ? anchor.y - size.height - 10
+                : anchor.y + 20
+        )
+
+        if origin.x + size.width > screenFrame.maxX - FloatingSuggestionLayout.screenPadding {
+            origin.x = screenFrame.maxX - size.width - FloatingSuggestionLayout.screenPadding
         }
-        if origin.y < screenFrame.minY + 10 {
-            origin.y = anchor.y + 20
+        if origin.y < screenFrame.minY + FloatingSuggestionLayout.screenPadding {
+            origin.y = screenFrame.minY + FloatingSuggestionLayout.screenPadding
         }
-        origin.x = min(max(origin.x, screenFrame.minX + 10), screenFrame.maxX - size.width - 10)
-        origin.y = min(max(origin.y, screenFrame.minY + 10), screenFrame.maxY - size.height - 10)
+        let minimumX = screenFrame.minX + FloatingSuggestionLayout.screenPadding
+        let maximumX = max(minimumX, screenFrame.maxX - size.width - FloatingSuggestionLayout.screenPadding)
+        let minimumY = screenFrame.minY + FloatingSuggestionLayout.screenPadding
+        let maximumY = max(minimumY, screenFrame.maxY - size.height - FloatingSuggestionLayout.screenPadding)
+        origin.x = min(max(origin.x, minimumX), maximumX)
+        origin.y = min(max(origin.y, minimumY), maximumY)
         return origin
     }
 
-    // MARK: - Cursor follow
-
-    /// Starts the 60Hz timer that eases the panel toward the mouse while it's
-    /// visible. Added in `.common` run-loop mode so it keeps animating during
-    /// scrolling / event tracking. Idempotent.
     private func startCursorFollow() {
         guard cursorFollowTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.cursorFollowTick()
+                self?.advanceCursorFollowOneFrame()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -151,21 +284,26 @@ final class FloatingSuggestionPanel {
         smoothedPanelOrigin = nil
     }
 
-    /// One eased step toward the cursor. Moves only the origin (never resizes)
-    /// so it's cheap, and skips sub-pixel moves to avoid compositing churn.
-    private func cursorFollowTick() {
+    private func advanceCursorFollowOneFrame() {
         guard let panel, panel.isVisible else { return }
-        let targetOrigin = panelOrigin(forSize: panel.frame.size, near: NSEvent.mouseLocation)
-        let current = smoothedPanelOrigin ?? panel.frame.origin
-        let next = CGPoint(
-            x: current.x + (targetOrigin.x - current.x) * cursorFollowEaseFactor,
-            y: current.y + (targetOrigin.y - current.y) * cursorFollowEaseFactor
+        let anchor = currentFollowAnchor()
+        let targetOrigin = panelOrigin(forSize: panel.frame.size, near: anchor)
+        let currentOrigin = smoothedPanelOrigin ?? panel.frame.origin
+        let easeFactor: CGFloat = 0.18
+        let nextOrigin = CGPoint(
+            x: currentOrigin.x + (targetOrigin.x - currentOrigin.x) * easeFactor,
+            y: currentOrigin.y + (targetOrigin.y - currentOrigin.y) * easeFactor
         )
-        smoothedPanelOrigin = next
-        if abs(next.x - panel.frame.origin.x) > 0.1 || abs(next.y - panel.frame.origin.y) > 0.1 {
-            panel.setFrameOrigin(next)
+        smoothedPanelOrigin = nextOrigin
+
+        if abs(nextOrigin.x - panel.frame.origin.x) < 0.2
+            && abs(nextOrigin.y - panel.frame.origin.y) < 0.2 {
+            return
         }
+
+        panel.setFrameOrigin(nextOrigin)
     }
+
 }
 
 private final class PromptCoachContextPanel: NSPanel {
@@ -309,11 +447,50 @@ private struct ContextStatusPanelView: View {
     }
 }
 
+@MainActor
+private enum FloatingSuggestionCopy {
+    static func reason(for appState: AppState) -> String {
+        let isKorean = appState.promptLanguage == .korean
+        let fallback = isKorean ? "조금 더 구체적으로 해볼까요?" : "This could be more specific."
+        return conversationalReason(appState.lastReason ?? appState.selectedSuggestion?.reason ?? fallback)
+    }
+
+    static func suggestionLine(for appState: AppState) -> String {
+        guard let suggestion = appState.selectedSuggestion else { return "" }
+        let rewrite = suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rewrite.isEmpty else { return "" }
+        return appState.promptLanguage == .korean
+            ? "저라면 이렇게 써볼 것 같아요:\n\(rewrite)"
+            : "Here's how I'd write it:\n\(rewrite)"
+    }
+
+    static func hasCopyableAdvice(for appState: AppState) -> Bool {
+        guard let suggestion = appState.selectedSuggestion else { return false }
+        if !suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let reason = (appState.lastReason ?? suggestion.reason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !reason.isEmpty
+    }
+
+    private static func conversationalReason(_ reason: String) -> String {
+        if reason.hasSuffix(".") || reason.hasSuffix("?") || reason.hasSuffix("!") {
+            return reason
+        }
+        return "\(reason)."
+    }
+}
+
+@MainActor
 struct FloatingSuggestionPanelView: View {
     @ObservedObject var appState: AppState
+    let onContentSizeChange: @Sendable (CGSize) -> Void
     @StateObject private var typingModel = CoachTypingModel()
 
     var body: some View {
+        let reportContentSize = onContentSizeChange
+
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top, spacing: 8) {
                 coachGlyph
@@ -383,7 +560,8 @@ struct FloatingSuggestionPanelView: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 10)
-        .frame(width: 340, alignment: .leading)
+        .frame(width: FloatingSuggestionLayout.contentWidth, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.black.opacity(0.74))
@@ -400,11 +578,23 @@ struct FloatingSuggestionPanelView: View {
         .onAppear {
             configureTyping()
         }
-        .onChange(of: appState.selectedSuggestion?.id) { _ in
+        .onChange(of: appState.selectedSuggestion?.id) { _, _ in
             configureTyping()
         }
-        .onChange(of: appState.lastReason) { _ in
+        .onChange(of: appState.lastReason) { _, _ in
             configureTyping()
+        }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: FloatingSuggestionContentSizePreferenceKey.self,
+                        value: proxy.size
+                    )
+            }
+        )
+        .onPreferenceChange(FloatingSuggestionContentSizePreferenceKey.self) { size in
+            reportContentSize(size)
         }
     }
 
@@ -413,13 +603,7 @@ struct FloatingSuggestionPanelView: View {
     /// True when there's something Tab can copy — mirrors the controller's
     /// `copyableAdviceText`: the rewrite (`text`) if present, else the reason.
     private var hasCopyableAdvice: Bool {
-        guard let suggestion = appState.selectedSuggestion else { return false }
-        if !suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return true
-        }
-        let reason = (appState.lastReason ?? suggestion.reason ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return !reason.isEmpty
+        FloatingSuggestionCopy.hasCopyableAdvice(for: appState)
     }
 
     @ViewBuilder
@@ -457,36 +641,19 @@ struct FloatingSuggestionPanelView: View {
             return
         }
 
-        let isKorean = appState.promptLanguage == .korean
-        let reason = appState.lastReason
-            ?? (isKorean ? "조금 더 구체적으로 해볼까요?" : "This could be more specific.")
-
-        // Frame the rewrite as a modeled example ("here's how I'd write it"),
-        // not a command. If there's no rewrite (a pure question), show nothing
-        // here — the question lives in `reason`.
-        let rewrite = suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let suggestionLine: String
-        if rewrite.isEmpty {
-            suggestionLine = ""
-        } else {
-            suggestionLine = isKorean
-                ? "저라면 이렇게 써볼 것 같아요:\n\(rewrite)"
-                : "Here's how I'd write it:\n\(rewrite)"
-        }
-
         typingModel.start(
             id: suggestion.id,
-            reason: conversationalReason(reason),
-            suggestion: suggestionLine
+            reason: FloatingSuggestionCopy.reason(for: appState),
+            suggestion: FloatingSuggestionCopy.suggestionLine(for: appState)
         )
     }
+}
 
-    private func conversationalReason(_ reason: String) -> String {
-        // Leave questions/exclamations as-is; only add a period to plain statements.
-        if reason.hasSuffix(".") || reason.hasSuffix("?") || reason.hasSuffix("!") {
-            return reason
-        }
-        return "\(reason)."
+private struct FloatingSuggestionContentSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
     }
 }
 

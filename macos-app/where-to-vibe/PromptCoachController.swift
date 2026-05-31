@@ -494,6 +494,17 @@ final class PromptCoachController {
         )
         appState.updateInferredLearningProfile(profile)
 
+        let apiKey = appState.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard !apiKey.isEmpty else {
+                appState.idleDebugText = "Idle waiting: screen-aware suggestions need an API key"
+                debugLog("Idle empty input skipped — no API key for screen-aware suggestion.", force: true)
+                return
+            }
+            generateProactiveIdleSuggestion(language: language, userLevel: profile.userLevel, stage: profile.stage, apiKey: apiKey, force: force)
+            return
+        }
+
         let suggestion = idleNudgeComposer.suggestion(
             for: text,
             language: language,
@@ -510,6 +521,54 @@ final class PromptCoachController {
         appState.setSuggestions([suggestion], reason: suggestion.reason)
         showPanelAtBestAnchor()
         appState.idleDebugText = force ? "Idle test shown" : "Idle nudge shown"
+    }
+
+    private func generateProactiveIdleSuggestion(
+        language: PromptLanguage,
+        userLevel: UserLevel,
+        stage: PromptEvolutionStage,
+        apiKey: String,
+        force: Bool
+    ) {
+        suggestionTask?.cancel()
+        appState.idleDebugText = "Idle reading current screen..."
+
+        suggestionTask = Task { [weak self] in
+            guard let self else { return }
+            let preferredAIMode: SuggestionMode = self.appState.suggestionMode == .highQualityAI
+                ? .highQualityAI
+                : .fastAI
+            let response = await self.suggestionEngine.suggestions(
+                for: "",
+                mode: preferredAIMode,
+                language: language,
+                userLevel: userLevel,
+                stage: stage,
+                apiKey: apiKey,
+                forceCoach: true
+            )
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                let suggestion = response.suggestions.first
+                self.appState.idleDebugText = response.debugMessage
+                guard let suggestion else {
+                    self.debugLog("Proactive idle screen suggestion returned EMPTY (\(response.debugMessage)).", force: true)
+                    self.floatingPanel.hide()
+                    return
+                }
+
+                guard force || suggestion.text != self.lastIdleNudgeText else {
+                    self.appState.idleDebugText = "Idle skipped: same screen-aware nudge was already shown"
+                    return
+                }
+
+                self.lastIdleNudgeText = suggestion.text
+                self.appState.setSuggestions([suggestion], reason: suggestion.reason)
+                self.showPanelAtBestAnchor()
+                self.debugLog("Proactive idle screen suggestion shown.", force: true)
+            }
+        }
     }
 
     private func showPanelAtBestAnchor() {

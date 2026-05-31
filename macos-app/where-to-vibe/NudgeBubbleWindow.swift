@@ -34,7 +34,10 @@ final class NudgeBubbleWindow: NSObject {
 
     // MARK: - Tunables
 
-    private let bubbleMaximumWidth: CGFloat = 360
+    private let bubbleMinimumWidth: CGFloat = 220
+    private let bubbleToastMinimumWidth: CGFloat = 160
+    private let bubbleMaximumWidth: CGFloat = 520
+    private let bubbleMaximumScreenHeightRatio: CGFloat = 0.94
     /// How long the bubble stays on screen before auto-dismissing.
     /// 17s is long enough to read the nudge + the rewrite block and
     /// decide whether to press Tab to copy. ESC dismisses immediately
@@ -122,18 +125,14 @@ final class NudgeBubbleWindow: NSObject {
         // including the rewrite block and the "Tab to copy" affordance.
         measurementModel.revealedCharacterCount = nudgeText.count + (rewriteText?.count ?? 0)
         measurementModel.hasFinishedTypingRewrite = (rewriteText?.isEmpty == false)
-        let measuringHostingView = NSHostingView(
-            rootView: NudgeBubbleView(typewriterModel: measurementModel)
+        currentBubbleSize = measureBubbleSize(
+            with: measurementModel,
+            on: screen,
+            minimumWidth: bubbleToastMinimumWidth,
+            minimumHeight: 40
         )
-        measuringHostingView.frame = NSRect(
-            x: 0, y: 0,
-            width: bubbleMaximumWidth,
-            height: 1000  // generous so text doesn't clip during measurement
-        )
-        let measuredFittingSize = measuringHostingView.fittingSize
-        let bubbleWidth = min(bubbleMaximumWidth, max(160, measuredFittingSize.width))
-        let bubbleHeight = max(40, measuredFittingSize.height)
-        currentBubbleSize = CGSize(width: bubbleWidth, height: bubbleHeight)
+        let bubbleWidth = currentBubbleSize.width
+        let bubbleHeight = currentBubbleSize.height
 
         // Step 2b: build (or reuse) the LIVE hosting view bound to the
         // real typewriterModel. We then start typing — characters flow
@@ -246,7 +245,7 @@ final class NudgeBubbleWindow: NSObject {
         // Seed a small initial size so the bubble shows up immediately
         // even before any token arrives. Final size is computed each
         // time text grows.
-        let placeholderSize = CGSize(width: 220, height: 44)
+        let placeholderSize = CGSize(width: bubbleMinimumWidth, height: 44)
         currentBubbleSize = placeholderSize
         let initialOrigin = computeBubbleOriginNearCursor(
             cursorInScreenCoords: cursorScreenPoint,
@@ -291,24 +290,22 @@ final class NudgeBubbleWindow: NSObject {
         measurementModel.targetNudgeText = nudgeSoFar
         measurementModel.modeLabel = typewriterModel.modeLabel
         measurementModel.revealedCharacterCount = nudgeSoFar.count
-        let measuringHostingView = NSHostingView(
-            rootView: NudgeBubbleView(typewriterModel: measurementModel)
+        let screen = activeBubbleScreen()
+        let newBubbleSize = measureBubbleSize(
+            with: measurementModel,
+            on: screen,
+            minimumWidth: bubbleMinimumWidth,
+            minimumHeight: 44
         )
-        measuringHostingView.frame = NSRect(
-            x: 0, y: 0, width: bubbleMaximumWidth, height: 1000
-        )
-        let fittingSize = measuringHostingView.fittingSize
-        let newBubbleWidth = min(bubbleMaximumWidth, max(220, fittingSize.width))
-        let newBubbleHeight = max(44, fittingSize.height)
-        currentBubbleSize = CGSize(width: newBubbleWidth, height: newBubbleHeight)
+        currentBubbleSize = newBubbleSize
         // Keep position smooth — the cursor-follow timer will catch up
         // next frame. We only mutate the size here; origin updates come
         // from advanceCursorFollowOneFrame.
         hostingView.frame = NSRect(
             x: hostingView.frame.origin.x,
             y: hostingView.frame.origin.y,
-            width: newBubbleWidth,
-            height: newBubbleHeight
+            width: newBubbleSize.width,
+            height: newBubbleSize.height
         )
     }
 
@@ -343,21 +340,19 @@ final class NudgeBubbleWindow: NSObject {
         measurementModel.revealedCharacterCount =
             typewriterModel.targetNudgeText.count + rewriteSoFar.count
         measurementModel.hasFinishedTypingRewrite = false  // no affordance during stream
-        let measuringHostingView = NSHostingView(
-            rootView: NudgeBubbleView(typewriterModel: measurementModel)
+        let screen = activeBubbleScreen()
+        let newBubbleSize = measureBubbleSize(
+            with: measurementModel,
+            on: screen,
+            minimumWidth: bubbleMinimumWidth,
+            minimumHeight: 44
         )
-        measuringHostingView.frame = NSRect(
-            x: 0, y: 0, width: bubbleMaximumWidth, height: 1000
-        )
-        let fittingSize = measuringHostingView.fittingSize
-        let newBubbleWidth = min(bubbleMaximumWidth, max(220, fittingSize.width))
-        let newBubbleHeight = max(44, fittingSize.height)
-        currentBubbleSize = CGSize(width: newBubbleWidth, height: newBubbleHeight)
+        currentBubbleSize = newBubbleSize
         hostingView.frame = NSRect(
             x: hostingView.frame.origin.x,
             y: hostingView.frame.origin.y,
-            width: newBubbleWidth,
-            height: newBubbleHeight
+            width: newBubbleSize.width,
+            height: newBubbleSize.height
         )
     }
 
@@ -384,21 +379,19 @@ final class NudgeBubbleWindow: NSObject {
             finalMeasureModel.revealedCharacterCount =
                 response.nudge.count + (response.rewrite?.count ?? 0)
             finalMeasureModel.hasFinishedTypingRewrite = (response.rewrite?.isEmpty == false)
-            let measuringHostingView = NSHostingView(
-                rootView: NudgeBubbleView(typewriterModel: finalMeasureModel)
+            let screen = activeBubbleScreen()
+            let finalSize = measureBubbleSize(
+                with: finalMeasureModel,
+                on: screen,
+                minimumWidth: bubbleMinimumWidth,
+                minimumHeight: 44
             )
-            measuringHostingView.frame = NSRect(
-                x: 0, y: 0, width: bubbleMaximumWidth, height: 1000
-            )
-            let finalFittingSize = measuringHostingView.fittingSize
-            let finalWidth = min(bubbleMaximumWidth, max(220, finalFittingSize.width))
-            let finalHeight = max(44, finalFittingSize.height)
-            currentBubbleSize = CGSize(width: finalWidth, height: finalHeight)
+            currentBubbleSize = finalSize
             hostingView.frame = NSRect(
                 x: hostingView.frame.origin.x,
                 y: hostingView.frame.origin.y,
-                width: finalWidth,
-                height: finalHeight
+                width: finalSize.width,
+                height: finalSize.height
             )
         }
 
@@ -458,16 +451,11 @@ final class NudgeBubbleWindow: NSObject {
         let toastMeasureModel = NudgeBubbleTypewriterModel()
         toastMeasureModel.targetNudgeText = toastNudge
         toastMeasureModel.revealedCharacterCount = toastNudge.count
-        let toastMeasuringView = NSHostingView(
-            rootView: NudgeBubbleView(typewriterModel: toastMeasureModel)
-        )
-        toastMeasuringView.frame = NSRect(
-            x: 0, y: 0, width: bubbleMaximumWidth, height: 1000
-        )
-        let toastFittingSize = toastMeasuringView.fittingSize
-        currentBubbleSize = CGSize(
-            width: min(bubbleMaximumWidth, max(160, toastFittingSize.width)),
-            height: max(40, toastFittingSize.height)
+        currentBubbleSize = measureBubbleSize(
+            with: toastMeasureModel,
+            on: activeBubbleScreen(),
+            minimumWidth: bubbleToastMinimumWidth,
+            minimumHeight: 40
         )
 
         // Clear the rewrite so a second Tab doesn't re-copy.
@@ -487,6 +475,53 @@ final class NudgeBubbleWindow: NSObject {
     }
 
     // MARK: - Cursor-following
+
+    private func activeBubbleScreen() -> NSScreen? {
+        let cursorScreenPoint = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { $0.frame.contains(cursorScreenPoint) })
+            ?? overlayWindow?.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
+    private func maximumBubbleWidth(on screen: NSScreen?) -> CGFloat {
+        guard let screen else { return bubbleMaximumWidth }
+        let availableWidth = screen.frame.width
+            - bubbleScreenEdgePadding * 2
+            - cursorToBubbleHorizontalGap
+        return min(bubbleMaximumWidth, max(bubbleMinimumWidth, availableWidth))
+    }
+
+    private func maximumBubbleHeight(on screen: NSScreen?) -> CGFloat {
+        guard let screen else { return 720 }
+        let availableHeight = screen.frame.height - bubbleScreenEdgePadding * 2
+        return max(160, availableHeight * bubbleMaximumScreenHeightRatio)
+    }
+
+    private func measureBubbleSize(
+        with model: NudgeBubbleTypewriterModel,
+        on screen: NSScreen?,
+        minimumWidth: CGFloat,
+        minimumHeight: CGFloat
+    ) -> CGSize {
+        let maximumWidth = maximumBubbleWidth(on: screen)
+        let maximumHeight = maximumBubbleHeight(on: screen)
+        let measuringHostingView = NSHostingView(
+            rootView: NudgeBubbleView(typewriterModel: model)
+        )
+        measuringHostingView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: maximumWidth,
+            height: max(4000, maximumHeight * 2)
+        )
+        measuringHostingView.layoutSubtreeIfNeeded()
+
+        let fittingSize = measuringHostingView.fittingSize
+        let width = min(maximumWidth, max(minimumWidth, ceil(fittingSize.width)))
+        let height = min(maximumHeight, max(minimumHeight, ceil(fittingSize.height)))
+        return CGSize(width: width, height: height)
+    }
 
     /// Computes where the bubble's bottom-left corner should sit, in the
     /// overlay window's local coords, given the cursor's current global
@@ -515,8 +550,12 @@ final class NudgeBubbleWindow: NSObject {
         // Clamp vertically.
         let minimumOriginY = bubbleScreenEdgePadding
         let maximumOriginY = screen.frame.size.height - bubbleHeight - bubbleScreenEdgePadding
-        if bubbleOriginY < minimumOriginY { bubbleOriginY = minimumOriginY }
-        if bubbleOriginY > maximumOriginY { bubbleOriginY = maximumOriginY }
+        if maximumOriginY <= minimumOriginY {
+            bubbleOriginY = minimumOriginY
+        } else {
+            if bubbleOriginY < minimumOriginY { bubbleOriginY = minimumOriginY }
+            if bubbleOriginY > maximumOriginY { bubbleOriginY = maximumOriginY }
+        }
 
         return CGPoint(x: bubbleOriginX, y: bubbleOriginY)
     }

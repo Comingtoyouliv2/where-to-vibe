@@ -23,6 +23,9 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
 
         let frontmostApp = await frontmostApplicationName()
         let screenDataURL = await captureCursorScreenDataURL()
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, screenDataURL == nil {
+            return []
+        }
         let prompt = requestPrompt(
             currentInput: text,
             signal: signal,
@@ -276,6 +279,7 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         let missingAxes = signal.missingAxes.joined(separator: ", ")
         let outputLanguage = language == .korean ? "Korean" : "English"
         let previousPrompt = memory.lastAcceptedPrompt ?? "none"
+        let isProactiveEmptyContext = currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let styleNote = language == .korean
             ? """
             한국어로 답하되, 영어 직역체(번역 말투)를 절대 쓰지 마라. 한국 개발자가 친한
@@ -290,7 +294,9 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
             """
             : "Write in concise, natural English."
         let qualityNote: String
-        if mode == .fastAI {
+        if isProactiveEmptyContext {
+            qualityNote = "This is proactive idle coaching from the screen. Act like a critical thinking partner diagnosing the user's current bottleneck. Do NOT default to MVP, target user, or product discovery unless the screen is genuinely blank/initial. Prefer the user's current visible work: errors, code, docs, UI, design, tests, diff, or partially built feature."
+        } else if mode == .fastAI {
             qualityNote = "Prefer a fast, practical move over perfect completeness."
         } else if hasScreenSnapshot {
             qualityNote = "Ground every word in the user's DRAFT. The screenshot is only for the surrounding tool/app context — never take the subject or domain from it. Only reuse a screen noun if it is obviously part of the same task as the draft."
@@ -300,11 +306,99 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         let screenshotNote = hasScreenSnapshot
             ? "A screenshot is available, but it may contain content UNRELATED to the draft (other tabs, ads, other windows). Treat the DRAFT as the source of truth for what the user wants. Use the screenshot ONLY for the surrounding tool/app — never to choose the subject or domain."
             : "No screenshot is available. Do NOT require screen-specific nouns; coach from the draft, frontmost app, and local signals."
+        let emptyContextPolicy = isProactiveEmptyContext
+            ? """
+
+        # Proactive idle mode: empty input, screen is the signal
+        The user's chat box is empty because they are pausing and thinking. Treat this as:
+        "The user is stuck at a bottleneck in the visible work and needs the next useful question."
+
+        Your job:
+        1) Recognize what the user is currently doing from the screen.
+        2) Think critically: identify 2-3 plausible current bottlenecks, contradictions,
+           risks, missing checks, or bad assumptions visible on screen.
+        3) Pick the highest-leverage bottleneck and propose a concrete next prompt.
+        4) Include a compact example of what a good AI answer should cover, so the user can
+           judge whether the response actually helped.
+
+        Do NOT use generic product-development framing such as MVP, target user, first workflow,
+        or product type unless the screen is truly a blank initial idea state. If code, errors,
+        docs, UI, design, or a partially built app are visible, respond about THAT current work.
+
+        For this mode, choose intent "tighten_draft" and put this structure inside `rewrite`:
+        - "현재 보고 있는 것:" / "What I see:"
+        - "병목 후보:" / "Likely bottlenecks:"
+        - "다음에 물어볼 프롬프트:" / "Next prompt to ask:"
+        - "좋은 답변 예시:" / "A useful answer should cover:"
+
+        If there is no concrete work visible, choose stay_silent.
+        """
+            : ""
+        let draftGroundingPolicy = isProactiveEmptyContext
+            ? """
+        # Grounding (NON-NEGOTIABLE — proactive screen mode)
+        - The draft is empty. The screenshot and frontmost app are the primary signal.
+        - First infer the current activity from visible facts: file names, errors, UI text,
+          selected code, docs headings, app state, build output, or diff hunks.
+        - Never invent hidden project details. If a needed detail is not visible, say it is an assumption.
+        - If the screen already shows active work, never turn the advice into generic MVP/product discovery.
+        """
+            : """
+        # Grounding (NON-NEGOTIABLE — this is what makes your advice accurate)
+        - The user's DRAFT is the ONLY source of truth for WHAT they are building.
+        - NEVER introduce a topic, product type, genre, or domain word that is not
+          present in the draft. Example of the failure to avoid: the draft says
+          "부트캠프" (a bootcamp — about learning / getting a job) and you reply with
+          "로맨스소설 부트캠프 플랫폼". Romance novels have nothing to do with the draft.
+          Do not stitch unrelated nouns together. Stay strictly on the draft's topic.
+        - The screenshot may show content unrelated to the draft (other tabs, ads,
+          windows). If a screen noun is not clearly part of the SAME task as the
+          draft, IGNORE it completely.
+        - If the draft is too vague to even know the subject, choose ask_one_question
+          and ask what they want to build. Do NOT guess or invent a subject.
+        """
+        let thinkingPolicy = isProactiveEmptyContext
+            ? """
+        # Think before you respond (do NOT output this thinking)
+        1) What app/tool is the user in, and what visible work artifact are they looking at?
+        2) What signal says the user is stuck? No typing, no mouse movement, empty chat,
+           visible error, unfinished UI, confusing docs, repeated code, unverified change, etc.
+        3) What are 2-3 likely bottlenecks or flawed assumptions in the visible work?
+        4) Which single next prompt would best move the work forward?
+        5) What would a useful AI answer contain so the user can judge it?
+        """
+            : """
+        # Think before you respond (do NOT output this thinking)
+        1) First, restate in one sentence what the user's DRAFT is trying to do, using
+           ONLY words/concepts that appear in the draft. Quote up to 10 words from it.
+        2) Only if a screenshot is attached AND it clearly shows the SAME task, you may
+           note up to 2 concrete nouns from it (a file name, button, error string).
+           If the screen looks unrelated to the draft, skip this entirely.
+        3) What is the SMALLEST move that would make their next AI message better?
+        4) Given the user level, is the chosen move ALLOWED by the level policy below?
+           If not, pick a different move.
+        """
 
         // Level-specific hard constraints. The model is told what intents it is
         // allowed (and forbidden) to emit per level. This is what produces
         // qualitatively different shapes of advice as the user climbs the ladder.
         let levelPolicy = levelPolicyText(for: userLevel, language: language)
+        let ideaModelingPolicy = isProactiveEmptyContext
+            ? """
+        - In proactive idle mode, do NOT fill product-discovery axes like target user,
+          MVP, first workflow, or product type unless the screen is truly blank/initial.
+          Your default is bottleneck diagnosis: problem → evidence on screen → next prompt
+          → what a good answer should contain.
+        """
+            : """
+        - When the idea is underspecified, DON'T just interrogate. Your DEFAULT is to MODEL a
+          concrete better version — the spirit of "저라면 이렇게 써볼 것 같아요": write the
+          improved prompt yourself, filling the missing pieces (who it's for, scope, the one
+          core thing, a constraint, what "done" looks like) with reasonable assumptions, and
+          briefly state those assumptions (e.g. "혼자 쓰는 용도라고 가정하면"). The user can
+          Tab-copy it. Prefer the tighten_draft / fill_missing_axis intents (which carry a
+          rewrite) over ask_one_question.
+        """
 
         return """
         You are Where-to-vibe. You sit beside the user's cursor inside \(frontmostApp) and
@@ -326,13 +420,12 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
           RELEVANT on-screen context (which tool/app they're in, the visible task) to tailor
           your help. Make it obvious you understood THEIR specific situation — reference
           their actual topic in your own words, never generic boilerplate.
-        - When the idea is underspecified, DON'T just interrogate. Your DEFAULT is to MODEL a
-          concrete better version — the spirit of "저라면 이렇게 써볼 것 같아요": write the
-          improved prompt yourself, filling the missing pieces (who it's for, scope, the one
-          core thing, a constraint, what "done" looks like) with reasonable assumptions, and
-          briefly state those assumptions (e.g. "혼자 쓰는 용도라고 가정하면"). The user can
-          Tab-copy it. Prefer the tighten_draft / fill_missing_axis intents (which carry a
-          rewrite) over ask_one_question.
+        - Be usefully critical. Do not merely help the user phrase their existing thought.
+          Look for the bottleneck, weak assumption, missing verification, or mismatch between
+          what is visible and what they are likely trying to do. Then propose the next prompt
+          that would unblock that specific issue.
+        \(emptyContextPolicy)
+        \(ideaModelingPolicy)
         - Ask a question ONLY when a detail is load-bearing AND you genuinely cannot make a
           reasonable assumption. Even then, ask at most one — and still offer your best draft
           alongside it. A good question is one you could NOT have asked without reading their draft.
@@ -353,30 +446,16 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         Guidance: \(guidance.reason ?? "none")
         Limitation note: \(guidance.limitationNote ?? "none")
 
-        # Grounding (NON-NEGOTIABLE — this is what makes your advice accurate)
-        - The user's DRAFT is the ONLY source of truth for WHAT they are building.
-        - NEVER introduce a topic, product type, genre, or domain word that is not
-          present in the draft. Example of the failure to avoid: the draft says
-          "부트캠프" (a bootcamp — about learning / getting a job) and you reply with
-          "로맨스소설 부트캠프 플랫폼". Romance novels have nothing to do with the draft.
-          Do not stitch unrelated nouns together. Stay strictly on the draft's topic.
-        - The screenshot may show content unrelated to the draft (other tabs, ads,
-          windows). If a screen noun is not clearly part of the SAME task as the
-          draft, IGNORE it completely.
-        - If the draft is too vague to even know the subject, choose ask_one_question
-          and ask what they want to build. Do NOT guess or invent a subject.
+        \(draftGroundingPolicy)
 
-        # Think before you respond (do NOT output this thinking)
-        1) First, restate in one sentence what the user's DRAFT is trying to do, using
-           ONLY words/concepts that appear in the draft. Quote up to 10 words from it.
-        2) Only if a screenshot is attached AND it clearly shows the SAME task, you may
-           note up to 2 concrete nouns from it (a file name, button, error string).
-           If the screen looks unrelated to the draft, skip this entirely.
-        3) What is the SMALLEST move that would make their next AI message better?
+        \(thinkingPolicy)
            Possible moves:
              - tighten_draft     — they're close. Rewrite into a sharper version.
              - fill_missing_axis — one or two axes (goal / done-when / verify-by /
                                    constraints / target user) are missing. Add them.
+                                   In proactive empty-screen mode, this should mean
+                                   missing verification / next decision / risk, NOT
+                                   target-user discovery.
              - ask_one_question  — the draft is underspecified. Ask 1–2 SHARP, specific
                                    questions that surface the key decisions, phrased with
                                    THEIR exact topic so it's clear you read it.
@@ -392,8 +471,6 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
                                    oh-my-openagent and write the literal first prompt.
              - stay_silent       — use only when the draft is already concrete enough
                                    to send as-is AND local signals do not ask for coaching.
-        4) Given the user level, is the chosen move ALLOWED by the level policy below?
-           If not, pick a different move.
 
         # Level policy (HARD constraints — do not violate)
         \(levelPolicy)

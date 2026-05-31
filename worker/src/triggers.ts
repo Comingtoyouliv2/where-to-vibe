@@ -88,6 +88,7 @@ export function looksVague(text: string | null | undefined): boolean {
 export type Mode =
   | "prompt_coach"
   | "vague_build_me"
+  | "empty_context_next_step"
   | "error_first_cause"
   | "diff_review"
   | "none";
@@ -104,6 +105,9 @@ export function predictModeFromHints(h: ClientHints): Mode | null {
     AI_CHAT_APP_NAMES.has(app) || AI_CHAT_BROWSER_HOSTS.has(host);
 
   if (inAiChat && h.draftPromptText !== undefined && h.draftPromptText !== null) {
+    if (h.draftPromptText.trim().length === 0 && h.triggerSource === "idle") {
+      return "empty_context_next_step";
+    }
     return looksVague(h.draftPromptText) ? "vague_build_me" : "prompt_coach";
   }
 

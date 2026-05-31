@@ -10,6 +10,7 @@
 export type CoachMode =
   | "prompt_coach"
   | "vague_build_me"
+  | "empty_context_next_step"
   | "error_first_cause"
   | "diff_review"
   | "none";
@@ -26,6 +27,7 @@ export interface CoachResponse {
 const VALID_MODES: ReadonlySet<CoachMode> = new Set([
   "prompt_coach",
   "vague_build_me",
+  "empty_context_next_step",
   "error_first_cause",
   "diff_review",
   "none",
@@ -174,6 +176,17 @@ export function checkKarpathyRules(r: CoachResponse): string[] {
   if (r.mode === "vague_build_me" && r.rewrite) {
     if (!/VERIFY BY:/i.test(r.rewrite)) warnings.push("rewrite missing 'VERIFY BY:'");
     if (!/DONE WHEN:/i.test(r.rewrite)) warnings.push("rewrite missing 'DONE WHEN:'");
+  }
+
+  // Rule: proactive empty-context coaching is useful only if it gives the
+  // user a paste-ready next prompt.
+  if (r.mode === "empty_context_next_step") {
+    if (!r.rewrite || r.rewrite.trim().length === 0) {
+      warnings.push("empty_context_next_step should include a paste-ready rewrite");
+    }
+    if (r.checks.length === 0) {
+      warnings.push("empty_context_next_step should include at least 1 check");
+    }
   }
 
   // Rule: diff_review must have <= 3 findings (we measure by sentences in nudge).

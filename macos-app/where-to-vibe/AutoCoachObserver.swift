@@ -430,7 +430,9 @@ final class AutoCoachObserver {
     ) async {
         let hints = CoachClientHints(
             frontmostBundleID: frontApp.bundleIdentifier,
-            typingPaused: true
+            frontAppName: frontApp.localizedName,
+            typingPaused: true,
+            triggerSource: "idle"
         )
 
         let frontAppNameForCue = frontApp.localizedName ?? "the foreground app"
@@ -439,7 +441,17 @@ final class AutoCoachObserver {
         If there's draft text in an AI-chat input field (usually at the \
         bottom or in a right sidebar), that text is what they want \
         coaching on — read it carefully and coach about THAT specifically, \
-        not about other code or output also visible on screen.
+        not about other code or output also visible on screen. If the AI-chat \
+        input is empty or no draft text is visible, proactively infer the \
+        user's next useful prompt from the surrounding screen context. If the \
+        screen shows they are already working on code, an error, docs, design, \
+        or a partially built UI, do not suggest generic MVP/target-user/product \
+        framing. Act as a critical thinking partner: recognize the current \
+        work, identify the likely bottleneck or flawed assumption, and prepare \
+        a prompt about that exact issue plus what a useful AI answer should \
+        cover. Only use idea/MVP shaping when the screen is truly blank or at \
+        the start of a new idea. \
+        If there is no concrete visible next step, return mode:"none".
         """
 
         // Streaming round-trip. We open the bubble immediately (empty),

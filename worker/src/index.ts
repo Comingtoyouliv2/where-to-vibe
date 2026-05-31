@@ -346,6 +346,7 @@ async function handleClassify(request: Request, env: Env): Promise<Response> {
   const valid: ReadonlySet<Mode> = new Set([
     "prompt_coach",
     "vague_build_me",
+    "empty_context_next_step",
     "error_first_cause",
     "diff_review",
     "none",

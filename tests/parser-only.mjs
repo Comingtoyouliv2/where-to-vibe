@@ -96,6 +96,22 @@ console.log("\n--- parser: bad mode ---");
   check("missing reports mode", (r.missing ?? []).includes("mode"));
 }
 
+console.log("\n--- parser: proactive empty-context mode ---");
+{
+  const r = parseCoachResponse(
+    JSON.stringify({
+      mode: "empty_context_next_step",
+      nudge: "The editor is open with no prompt yet; start with this next question.",
+      rewrite: "Review the visible file and suggest the smallest next implementation step.",
+      checks: ["AI response names the visible file and one next action"],
+      point: null,
+      assumptions: [],
+    }),
+  );
+  check("ok", r.ok === true);
+  check("mode", r.value?.mode === "empty_context_next_step");
+}
+
 console.log("\n--- karpathy: forbidden words ---");
 {
   const warnings = checkKarpathyRules({
@@ -144,6 +160,20 @@ console.log("\n--- karpathy: error_first_cause check count ---");
     assumptions: [],
   });
   check("flags 0 checks", zero.some((w) => w.includes("exactly 1")));
+}
+
+console.log("\n--- karpathy: empty_context_next_step requires rewrite ---");
+{
+  const warnings = checkKarpathyRules({
+    mode: "empty_context_next_step",
+    nudge: "start here",
+    rewrite: null,
+    checks: [],
+    point: null,
+    assumptions: [],
+  });
+  check("flags missing rewrite", warnings.some((w) => w.includes("paste-ready rewrite")));
+  check("flags missing checks", warnings.some((w) => w.includes("at least 1 check")));
 }
 
 console.log("\n--- karpathy: diff_review finding cap ---");

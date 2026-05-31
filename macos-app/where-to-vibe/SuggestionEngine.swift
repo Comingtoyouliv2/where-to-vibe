@@ -209,6 +209,14 @@ final class SuggestionEngine {
                 apiKey: apiKey
             )
             if refined.isEmpty {
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && forceCoach {
+                    print("[Coach/Engine] Proactive empty-context AI chose silence → staying silent instead of showing MVP fallback.")
+                    return SuggestionEngineResponse(
+                        signal: signal,
+                        suggestions: [],
+                        debugMessage: "AI chose silence for current screen"
+                    )
+                }
                 let localFallback = localSuggestions(
                     for: text,
                     signal: signal,
@@ -233,6 +241,14 @@ final class SuggestionEngine {
                 debugMessage: "\(mode.displayName) suggestion ready"
             )
         } catch {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && forceCoach {
+                print("[Coach/Engine] Proactive empty-context AI request FAILED (\(error.localizedDescription)) → staying silent instead of showing MVP fallback.")
+                return SuggestionEngineResponse(
+                    signal: signal,
+                    suggestions: [],
+                    debugMessage: "Screen-aware idle suggestion failed: \(error.localizedDescription)"
+                )
+            }
             let localFallback = localSuggestions(
                 for: text,
                 signal: signal,

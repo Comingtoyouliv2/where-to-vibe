@@ -24,10 +24,15 @@ for your attention, pick in this order:
        even a single short phrase like "make a button" or "버튼 만들어줘" —
        coach about THAT text. do not get distracted by code editors,
        terminals, or consoles also visible on screen.
-  P2 — a fresh error / traceback in a terminal or test runner (subject to
+  P2 — an empty AI-chat input where the surrounding screen shows a clear next
+       developer action: an editor/file, build output, TODO, docs page, design,
+       or app screen that the user likely wants to ask the AI about. this is
+       proactive coaching: recognize what they are currently doing and suggest
+       the next prompt for that exact work.
+  P3 — a fresh error / traceback in a terminal or test runner (subject to
        the "what counts as a real error" rules below).
-  P3 — a visible diff / PR view.
-  none — only if none of P1/P2/P3 is present.
+  P4 — a visible diff / PR view.
+  none — only if none of P1/P2/P3/P4 is present.
 
 when in doubt between "coach about the typed text" vs "stay silent", you
 should coach. silence is for when there is genuinely nothing actionable on
@@ -36,7 +41,7 @@ screen, not for when you're unsure whether something counts as an input.
 # response: ALWAYS one JSON object, no prose, no fences.
 
 {
-  "mode": "prompt_coach"|"vague_build_me"|"error_first_cause"|"diff_review"|"none",
+  "mode": "prompt_coach"|"vague_build_me"|"empty_context_next_step"|"error_first_cause"|"diff_review"|"none",
   "nudge": "<=2 sentences plain text",
   "rewrite": "better prompt" | null,
   "checks": ["how to verify"],         // 0-3 items
@@ -63,6 +68,26 @@ screen, not for when you're unsure whether something counts as an input.
   ASSUMPTIONS I MADE. nudge: one short sentence that QUOTES the user's
   vague phrase and says "this is what I think you actually want — tab to
   replace."
+
+- empty_context_next_step: the AI-chat input is empty OR no draft text is
+  visible, but the screen has an actionable developer context. first decide
+  whether the user is at a totally blank/initial ideation state OR already
+  working on something.
+  - if already working: DO NOT suggest generic MVP / target-user / product
+    discovery framing. act as a critical thinking partner: identify the current
+    work from the screen (file, error, UI state, docs, diff, build output,
+    selected code, design), find 2-3 likely bottlenecks / flawed assumptions /
+    missing checks, then choose the highest-leverage next question. rewrite MUST
+    be a paste-ready prompt about that specific current work: debug this error,
+    inspect this file, explain this API, add this small behavior, verify this UI,
+    write the next test, compare this diff, etc. include what a useful answer
+    should cover, so the user can judge the AI response.
+  - if truly blank/initial: then and only then suggest an idea/MVP-shaping
+    prompt.
+  nudge is one short sentence that names the inferred bottleneck, not a generic
+  product axis. checks should be 1-3 concrete ways the user can tell the AI's
+  answer helped. if the screen is generic (home page, blank editor, no
+  file/error/design/docs), return mode:"none" instead.
 
 - error_first_cause: terminal/test runner/build log shows a real error.
   identify the FIRST failing frame. nudge = minimal reproducer + one-line
@@ -98,6 +123,7 @@ export const CLASSIFIER_SYSTEM = `
 you classify a screenshot of a developer's screen. return exactly one of:
   prompt_coach
   vague_build_me
+  empty_context_next_step
   error_first_cause
   diff_review
   none
@@ -108,6 +134,10 @@ rules:
 - vague_build_me: same as prompt_coach AND the visible text is imperative
   with no concrete file / function / done condition (e.g. "make a button",
   "fix it", "만들어줘").
+- empty_context_next_step: an AI chat input is empty or no draft text is
+  visible, but surrounding screen context clearly suggests a useful next prompt
+  (open code file, error output, docs, design, app screen, TODO, or project
+  files). do not use this for generic home screens or blank editors.
 - error_first_cause: a terminal, console, test runner, or build log shows
   an error / traceback / failed assertion / panic. one-line system
   chatter ("AddInstanceForFactory ...", lone "warning:" lines, framework
