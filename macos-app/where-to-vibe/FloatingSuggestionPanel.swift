@@ -32,11 +32,12 @@ final class FloatingSuggestionPanel {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
-    // The panel follows the user's mouse, but the side it appears on is locked
-    // when the suggestion opens. Re-deciding above/below every frame made it
-    // bounce near screen edges.
-    private var cursorFollowTimer: Timer?
-    private var smoothedPanelOrigin: CGPoint?
+    // The panel is pinned where it first appears and does NOT follow the mouse.
+    // Continuously chasing the cursor at 60fps made the card shiver up and down
+    // while advice streamed in (mouse-sensor noise was baked into the position
+    // every frame, and the constant re-layout fought the growing content). The
+    // card now stays put; only its height grows as text streams, anchored at
+    // the spot captured when it opened.
     private var panelAnchor: CGPoint?
     private var verticalPlacement: FloatingSuggestionVerticalPlacement = .below
     private var horizontalPlacement: FloatingSuggestionHorizontalPlacement = .right
@@ -73,10 +74,10 @@ final class FloatingSuggestionPanel {
             positionPanel(near: panelAnchor ?? visibleAnchor)
             panel?.orderFrontRegardless()
             panel?.displayIfNeeded()
-            startCursorFollow()
-        } else {
-            resizePanel(toContentHeight: renderedPanelHeight, near: currentFollowAnchor())
         }
+        // The panel is pinned at panelAnchor; it never follows the cursor.
+        // Height changes from streaming content are applied in place by
+        // contentSizeDidChange, so there is nothing to do here when re-shown.
         let frame = panel?.frame ?? .zero
         print("[Coach/Panel] show() anchor=(\(Int(anchor.x)),\(Int(anchor.y))) normalized=(\(Int(visibleAnchor.x)),\(Int(visibleAnchor.y))) frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.size.width))x\(Int(frame.size.height))) isVisible=\(panel?.isVisible == true)")
     }
@@ -85,7 +86,6 @@ final class FloatingSuggestionPanel {
         if panel?.isVisible == true {
             print("[Coach/Panel] hide() — was visible.")
         }
-        stopCursorFollow()
         panelAnchor = nil
         verticalPlacement = .below
         horizontalPlacement = .right
@@ -150,14 +150,16 @@ final class FloatingSuggestionPanel {
     private func positionPanel(near anchor: CGPoint) {
         guard let panel else { return }
         let visibleAnchor = normalizedAnchor(anchor)
+        // Remember the exact anchor the card opened at so later height growth
+        // resizes against the same fixed point instead of the live cursor.
+        panelAnchor = visibleAnchor
         let layoutSize = panelSize(forContentHeight: renderedPanelHeight, near: visibleAnchor)
         let origin = panelOrigin(forSize: layoutSize, near: visibleAnchor)
         panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
-        smoothedPanelOrigin = origin
     }
 
     private func contentSizeDidChange(_ size: CGSize) {
-        guard panel?.isVisible == true else { return }
+        guard let panel, panel.isVisible else { return }
         let measuredHeight = ceil(size.height)
         guard measuredHeight.isFinite, measuredHeight > 0 else { return }
 
@@ -166,22 +168,14 @@ final class FloatingSuggestionPanel {
         let nextHeight = max(renderedPanelHeight, measuredHeight)
         guard abs(nextHeight - renderedPanelHeight) > 0.5 else { return }
         renderedPanelHeight = nextHeight
-        resizePanel(toContentHeight: nextHeight, near: currentFollowAnchor())
-    }
 
-    private func resizePanel(toContentHeight contentHeight: CGFloat, near anchor: CGPoint) {
-        guard let panel, panel.isVisible else { return }
-        let visibleAnchor = normalizedAnchor(anchor)
-        let layoutSize = panelSize(forContentHeight: contentHeight, near: visibleAnchor)
-        let origin = panelOrigin(forSize: layoutSize, near: visibleAnchor)
+        // Resize in place, pinned to the fixed open-anchor. The top edge stays
+        // put and the card extends downward — no cursor sampling, no per-frame
+        // timer, so streaming content can never make the panel tremble.
+        let anchor = panelAnchor ?? normalizedAnchor(NSEvent.mouseLocation)
+        let layoutSize = panelSize(forContentHeight: nextHeight, near: anchor)
+        let origin = panelOrigin(forSize: layoutSize, near: anchor)
         panel.setFrame(NSRect(origin: origin, size: layoutSize), display: true)
-        smoothedPanelOrigin = origin
-    }
-
-    private func currentFollowAnchor() -> CGPoint {
-        let mouseAnchor = normalizedAnchor(NSEvent.mouseLocation)
-        panelAnchor = mouseAnchor
-        return mouseAnchor
     }
 
     private func lockPlacement(near anchor: CGPoint) {
@@ -265,43 +259,6 @@ final class FloatingSuggestionPanel {
         origin.x = min(max(origin.x, minimumX), maximumX)
         origin.y = min(max(origin.y, minimumY), maximumY)
         return origin
-    }
-
-    private func startCursorFollow() {
-        guard cursorFollowTimer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.advanceCursorFollowOneFrame()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        cursorFollowTimer = timer
-    }
-
-    private func stopCursorFollow() {
-        cursorFollowTimer?.invalidate()
-        cursorFollowTimer = nil
-        smoothedPanelOrigin = nil
-    }
-
-    private func advanceCursorFollowOneFrame() {
-        guard let panel, panel.isVisible else { return }
-        let anchor = currentFollowAnchor()
-        let targetOrigin = panelOrigin(forSize: panel.frame.size, near: anchor)
-        let currentOrigin = smoothedPanelOrigin ?? panel.frame.origin
-        let easeFactor: CGFloat = 0.18
-        let nextOrigin = CGPoint(
-            x: currentOrigin.x + (targetOrigin.x - currentOrigin.x) * easeFactor,
-            y: currentOrigin.y + (targetOrigin.y - currentOrigin.y) * easeFactor
-        )
-        smoothedPanelOrigin = nextOrigin
-
-        if abs(nextOrigin.x - panel.frame.origin.x) < 0.2
-            && abs(nextOrigin.y - panel.frame.origin.y) < 0.2 {
-            return
-        }
-
-        panel.setFrameOrigin(nextOrigin)
     }
 
 }
@@ -572,8 +529,14 @@ struct FloatingSuggestionPanelView: View {
                 )
                 .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 10)
         )
-        .animation(.spring(response: 0.22, dampingFraction: 0.85), value: typingModel.visibleReason)
-        .animation(.spring(response: 0.22, dampingFraction: 0.85), value: typingModel.visibleSuggestion)
+        // While the typewriter appends a character every ~14ms, a springy
+        // height animation never settles — each new character restarts the
+        // spring (plus its overshoot), so the panel's measured height jitters
+        // and the window faithfully reproduces that jitter as a visible
+        // tremble. A short, non-bouncy easeOut lets the panel grow smoothly
+        // line-by-line without the shake.
+        .animation(.easeOut(duration: 0.12), value: typingModel.visibleReason)
+        .animation(.easeOut(duration: 0.12), value: typingModel.visibleSuggestion)
         .animation(.easeOut(duration: 0.16), value: typingModel.hasFinished)
         .onAppear {
             configureTyping()
