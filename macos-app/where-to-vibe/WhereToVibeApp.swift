@@ -35,6 +35,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var introSequenceController: IntroSequenceController?
     private var ideaRefinementController: IdeaRefinementController?
     private var sparkleUpdaterController: SPUStandardUpdaterController?
+    private let accessibilityOnboarder = AccessibilityPermissionOnboarder()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("PromptCoach: Starting...")
@@ -66,12 +67,6 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         print("[Coach/Identity] executablePath=\(executablePath)")
         print("[Coach/Identity] processName=\(processName)")
         print("[Coach/Identity] If System Settings → Accessibility shows a DIFFERENT app name (e.g. \"Where-to-vibe\" or \"where-to-vibe\") with a checkmark, that entry is for a different bundle ID and is NOT granting permission to THIS app. Remove old entries with the - button and re-add the currently running app.")
-        if !appState.hasAccessibilityPermission {
-            print("[Coach/Boot] Accessibility permission MISSING. Opening menu-bar panel and prompting the system dialog. Grant in System Settings → Privacy & Security → Accessibility, then quit and relaunch.")
-            menuBarController?.showPanel()
-            _ = AccessibilityTextReader.hasPermission(prompt: true)
-        }
-
         registerAsLoginItemIfNeeded()
         // startSparkleUpdater()
 
@@ -88,25 +83,62 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // The first-launch tutorial walks the user all the way through granting
+        // Accessibility permission as its final beat, so onboarding is one
+        // continuous flow. Just start it — runIntroThenStartCoach handles the
+        // no-intro fallback where the standalone onboarder guides the grant.
+        runIntroThenStartCoach()
+    }
+
+    /// Plays the first-launch intro (which now also guides the Accessibility
+    /// grant as its closing step) and then starts the live coach. Guarded to run
+    /// at most once per launch.
+    private func runIntroThenStartCoach() {
+        guard introSequenceController == nil else { return }
+
+        guard let menuBarController else {
+            // No menu bar to host the tutorial — fall back to the standalone
+            // onboarder, then start the coach once permission is granted.
+            startCoachAfterAccessibilityGrant()
+            return
+        }
+
         // First-launch intro animation (currently plays every launch, for dev).
         // Small delay so the menu bar status item has been laid out before the
         // fake cursor flies to it. Purely additive — renders in its own
         // transparent overlay and doesn't touch the suggestion / Tab path.
-        if let menuBarController {
-            let introSequenceController = IntroSequenceController(menuBarController: menuBarController)
-            introSequenceController.onFinished = { [weak self] in
-                Task { @MainActor in
-                    self?.promptCoachController?.start()
-                }
+        let introSequenceController = IntroSequenceController(
+            menuBarController: menuBarController,
+            accessibilityOnboarder: accessibilityOnboarder
+        )
+        introSequenceController.onFinished = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.appState.refreshAccessibilityPermission()
+                self.promptCoachController?.start()
             }
-            self.introSequenceController = introSequenceController
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                if !introSequenceController.play() {
-                    self.promptCoachController?.start()
-                }
+        }
+        self.introSequenceController = introSequenceController
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            if !introSequenceController.play() {
+                // Intro couldn't render — still guide the accessibility grant,
+                // then start the coach.
+                self.startCoachAfterAccessibilityGrant()
             }
-        } else {
-            promptCoachController?.start()
+        }
+    }
+
+    /// Fallback for when the tutorial can't run: guide the Accessibility grant
+    /// with the standalone onboarder (auto-open the pane + poll) and start the
+    /// live coach the instant permission is granted.
+    private func startCoachAfterAccessibilityGrant() {
+        menuBarController?.showPanel()
+        accessibilityOnboarder.start { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.appState.refreshAccessibilityPermission()
+                self.promptCoachController?.start()
+            }
         }
     }
 
