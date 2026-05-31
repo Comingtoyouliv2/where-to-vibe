@@ -42,6 +42,7 @@ enum IntroAI: String, CaseIterable, Identifiable {
 @MainActor
 final class IntroSequenceController {
     private weak var menuBarController: MenuBarController?
+    private let accessibilityOnboarder: AccessibilityPermissionOnboarder
     private let model = IntroSequenceModel()
     private var overlayWindow: NSWindow?
     private var sequenceTask: Task<Void, Never>?
@@ -52,8 +53,9 @@ final class IntroSequenceController {
     var onFinished: (() -> Void)?
     private var didFinish = false
 
-    init(menuBarController: MenuBarController) {
+    init(menuBarController: MenuBarController, accessibilityOnboarder: AccessibilityPermissionOnboarder) {
         self.menuBarController = menuBarController
+        self.accessibilityOnboarder = accessibilityOnboarder
     }
 
     func play() -> Bool {
@@ -261,6 +263,12 @@ final class IntroSequenceController {
         await sleep(3.5)
         if Task.isCancelled { return }
 
+        // 12.5) Final beat: walk the user through turning on Accessibility, so
+        // the whole onboarding — tutorial → menu bar → permission — is one
+        // continuous flow. Skipped instantly if permission is already granted.
+        await guideAccessibilityGrantIfNeeded(on: screen)
+        if Task.isCancelled { return }
+
         // 13) Fade everything out — the real panel stays open.
         withAnimation(.easeIn(duration: 0.5)) {
             model.bubbleOpacity = 0
@@ -268,6 +276,50 @@ final class IntroSequenceController {
         }
         await sleep(0.5)
         finishIntro()
+    }
+
+    /// Final tutorial beat: guides the user through granting Accessibility.
+    ///
+    /// Registers the app into the Accessibility list (so a ready-made toggle
+    /// exists), opens the System Settings pane, and keeps an instruction bubble
+    /// up — floating above Settings thanks to our screen-saver-level overlay —
+    /// until the user flips the toggle. Returns the instant permission is
+    /// granted; no quit, no relaunch. No-op when permission already exists.
+    private func guideAccessibilityGrantIfNeeded(on screen: NSScreen) async {
+        guard !WindowPositionManager.hasAccessibilityPermission() else { return }
+
+        model.bubbleText = "마지막으로 권한 하나만 켜면 끝이에요.\n제가 설정 창을 열어드릴게요 👇"
+        await sleep(2.6)
+        if Task.isCancelled { return }
+
+        // Pre-list the app and open the Accessibility pane. Our transparent,
+        // click-through overlay stays on top so the bubble guides the user while
+        // they interact with the real Settings window underneath.
+        accessibilityOnboarder.registerAndOpenSettings()
+        await sleep(0.9)
+        if Task.isCancelled { return }
+
+        // Park the instruction bubble near the top-center as a persistent hint.
+        withAnimation(.easeInOut(duration: 0.35)) {
+            model.bubblePosition = CGPoint(x: screen.frame.width / 2, y: 96)
+            model.bubbleOpacity = 1
+        }
+        model.bubbleText = "열린 설정 창에서 'Where-to-vibe' 스위치를 켜주세요.\n딱 한 번만 누르면 됩니다 ✨"
+
+        // Wait for the toggle. AXIsProcessTrusted() reflects the change live, so
+        // the user never has to quit or relaunch the app.
+        while !WindowPositionManager.hasAccessibilityPermission() {
+            if Task.isCancelled { return }
+            await sleep(0.4)
+        }
+
+        // Granted — bring our overlay back to the front and celebrate briefly
+        // before the tutorial hands off to the live coach.
+        NSApp.activate(ignoringOtherApps: true)
+        overlayWindow?.orderFrontRegardless()
+        model.bubbleText = "완료! 🎉 이제 같이 시작해요."
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { model.bubbleOpacity = 1 }
+        await sleep(2.2)
     }
 
     /// Converts the menu bar button's screen frame (AppKit, bottom-left origin)
