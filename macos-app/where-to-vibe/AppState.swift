@@ -21,6 +21,36 @@ enum PromptLanguage: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which AI the suggestion coach talks to. The user picks one in Settings and
+/// supplies their own key for it.
+enum AICoachProvider: String, CaseIterable, Identifiable {
+    case openAI
+    case claude
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .claude: return "Claude"
+        }
+    }
+
+    var keyPlaceholder: String {
+        switch self {
+        case .openAI: return "sk-..."
+        case .claude: return "sk-ant-..."
+        }
+    }
+
+    var keyLabel: String {
+        switch self {
+        case .openAI: return "OpenAI API Key"
+        case .claude: return "Anthropic (Claude) API Key"
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var isEnabled: Bool {
@@ -84,12 +114,34 @@ final class AppState: ObservableObject {
     @Published var openAIAPIKey: String {
         didSet {
             UserDefaults.standard.set(openAIAPIKey, forKey: "PromptCoach.openAIAPIKey")
-            let hadKeyBefore = !oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let hasKeyNow = hasOpenAIAPIKey
-            if !hadKeyBefore, hasKeyNow, suggestionMode == .localHeuristic {
-                suggestionMode = .fastAI
-                statusText = "Fast AI enabled. Type a vague prompt and pause."
-            }
+            enableFastAIIfKeyJustAdded(hadKeyBefore: !oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    /// The provider the coach talks to (OpenAI or Claude). The raw value is read
+    /// by the suggestion provider from UserDefaults under "PromptCoach.aiProvider".
+    @Published var selectedAICoachProvider: AICoachProvider {
+        didSet {
+            UserDefaults.standard.set(selectedAICoachProvider.rawValue, forKey: "PromptCoach.aiProvider")
+            // Switching to a provider that already has a key should turn the
+            // coach on; switching to one without a key shouldn't surprise-disable.
+            enableFastAIIfKeyJustAdded(hadKeyBefore: false)
+        }
+    }
+
+    @Published var claudeAPIKey: String {
+        didSet {
+            UserDefaults.standard.set(claudeAPIKey, forKey: "PromptCoach.claudeAPIKey")
+            enableFastAIIfKeyJustAdded(hadKeyBefore: !oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    /// When a usable key for the selected provider appears, flip the coach out of
+    /// offline Local mode into Fast AI so it starts working without extra steps.
+    private func enableFastAIIfKeyJustAdded(hadKeyBefore: Bool) {
+        if !hadKeyBefore, hasCoachAPIKey, suggestionMode == .localHeuristic {
+            suggestionMode = .fastAI
+            statusText = "Fast AI enabled. Type a vague prompt and pause."
         }
     }
 
@@ -99,6 +151,27 @@ final class AppState: ObservableObject {
     @Published private(set) var hasAccessibilityPermission = false
     @Published var currentInput: String = ""
     @Published var suggestions: [PromptSuggestion] = []
+    // Dimensions the user's current draft is missing (e.g. "target user",
+    // "success criteria"). Surfaced in the panel as a gap-first checklist so the
+    // user learns WHAT to add, not just copies a finished rewrite.
+    @Published var missingAxes: [String] = []
+
+    // MARK: - Prompt-skill learning path
+    // The named skills the coach teaches, in display order. They mirror the
+    // VaguePromptDetector axes, so "the user included this on their own" simply
+    // means "that axis was NOT flagged missing in their draft".
+    static let coachSkillAxes: [String] = ["goal", "scope", "context", "constraints", "success criteria"]
+    /// How many times the user must include a skill unprompted before it counts
+    /// as mastered. Small so progress feels reachable.
+    static let skillMasteryThreshold = 3
+
+    /// Per-skill count of times the user included that axis on their own. Capped
+    /// at the mastery threshold and persisted so progress survives relaunches.
+    @Published private(set) var axisMasteryCounts: [String: Int] = [:]
+    /// The last draft we recorded, so repeatedly re-analyzing the same draft
+    /// while the user pauses doesn't inflate the counts.
+    private var lastRecordedCoachedDraft = ""
+
     @Published var selectedSuggestionIndex = 0
     @Published var statusText = "Watching focused text fields"
     @Published var idleDebugText = "Idle coach waiting"
@@ -118,8 +191,43 @@ final class AppState: ObservableObject {
         isEnabled && hasAccessibilityPermission && selectedSuggestion != nil
     }
 
+    /// When set in the built app's Info.plist, the suggestion card runs through
+    /// our Cloudflare Worker proxy (on OUR OpenAI key) instead of requiring each
+    /// user to paste their own key — used for public/demo builds. Dev builds
+    /// leave it unset and fall back to the user's own key.
+    static var openAIProxyURL: String? {
+        AppBundleConfiguration.stringValue(forKey: "OpenAIProxyURL")
+    }
+
+    var isUsingOpenAIProxy: Bool { AppState.openAIProxyURL != nil }
+
+    /// Literal OpenAI-key (or proxy) presence — used by features that call OpenAI
+    /// directly regardless of the coach provider (e.g. idea-refinement chat).
     var hasOpenAIAPIKey: Bool {
-        !openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isUsingOpenAIProxy || !openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether the user's CURRENTLY SELECTED provider has a usable key (or, for
+    /// OpenAI, a configured proxy). Drives the Settings status + Fast-AI gating.
+    var hasCoachAPIKey: Bool {
+        switch selectedAICoachProvider {
+        case .openAI:
+            return isUsingOpenAIProxy || !openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .claude:
+            return !claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// The key for the SELECTED provider, handed to the suggestion engine. With
+    /// the OpenAI proxy active we pass a non-empty sentinel so the engine's
+    /// "needs a key" gate passes; the Worker injects the real key.
+    var coachAPIKey: String {
+        switch selectedAICoachProvider {
+        case .openAI:
+            return isUsingOpenAIProxy ? "proxy" : openAIAPIKey
+        case .claude:
+            return claudeAPIKey
+        }
     }
 
     var effectiveUserLevel: UserLevel {
@@ -139,7 +247,11 @@ final class AppState: ObservableObject {
         }
 
         let savedMode = defaults.string(forKey: "PromptCoach.suggestionMode")
-        self.suggestionMode = SuggestionMode(rawValue: savedMode ?? "") ?? .localHeuristic
+        // Default to Fast AI when the proxy is configured (public build) so the
+        // coach works out of the box without the user setting anything; otherwise
+        // default to offline Local heuristics.
+        self.suggestionMode = SuggestionMode(rawValue: savedMode ?? "")
+            ?? (AppState.openAIProxyURL != nil ? .fastAI : .localHeuristic)
 
         let savedLanguage = defaults.string(forKey: "PromptCoach.promptLanguage")
         self.promptLanguage = PromptLanguage(rawValue: savedLanguage ?? "") ?? .english
@@ -172,6 +284,9 @@ final class AppState: ObservableObject {
         }
 
         self.openAIAPIKey = defaults.string(forKey: "PromptCoach.openAIAPIKey") ?? ""
+        self.claudeAPIKey = defaults.string(forKey: "PromptCoach.claudeAPIKey") ?? ""
+        self.axisMasteryCounts = (defaults.dictionary(forKey: "PromptCoach.axisMasteryCounts") as? [String: Int]) ?? [:]
+        self.selectedAICoachProvider = AICoachProvider(rawValue: defaults.string(forKey: "PromptCoach.aiProvider") ?? "") ?? .openAI
     }
 
     func refreshAccessibilityPermission() {
@@ -185,16 +300,68 @@ final class AppState: ObservableObject {
             : "Accessibility permission required"
     }
 
-    func setSuggestions(_ suggestions: [PromptSuggestion], reason: String?) {
+    func setSuggestions(_ suggestions: [PromptSuggestion], reason: String?, missingAxes: [String] = []) {
         self.suggestions = suggestions
         self.selectedSuggestionIndex = 0
         self.lastReason = reason
+        self.missingAxes = missingAxes
     }
 
     func clearSuggestions() {
         suggestions = []
         selectedSuggestionIndex = 0
         lastReason = nil
+        missingAxes = []
+    }
+
+    // MARK: - Prompt-skill learning path
+
+    /// Records, for one coached draft, which skills the user included on their
+    /// own. A skill the user already supplied (not in `missingAxes`) gets its
+    /// count bumped toward mastery; this is what makes the learning path advance.
+    func recordCoachedDraft(text: String, missingAxes: [String]) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only count real, distinct drafts (skip empty + repeated re-analysis).
+        guard !trimmed.isEmpty, trimmed != lastRecordedCoachedDraft else { return }
+        lastRecordedCoachedDraft = trimmed
+
+        var updatedCounts = axisMasteryCounts
+        for axis in AppState.coachSkillAxes where !missingAxes.contains(axis) {
+            updatedCounts[axis] = min((updatedCounts[axis] ?? 0) + 1, AppState.skillMasteryThreshold)
+        }
+        axisMasteryCounts = updatedCounts
+        UserDefaults.standard.set(updatedCounts, forKey: "PromptCoach.axisMasteryCounts")
+    }
+
+    func isSkillMastered(_ axis: String) -> Bool {
+        (axisMasteryCounts[axis] ?? 0) >= AppState.skillMasteryThreshold
+    }
+
+    /// 0.0–1.0 progress toward mastering a single skill.
+    func skillProgressFraction(_ axis: String) -> Double {
+        Double(min(axisMasteryCounts[axis] ?? 0, AppState.skillMasteryThreshold)) / Double(AppState.skillMasteryThreshold)
+    }
+
+    var masteredSkillCount: Int {
+        AppState.coachSkillAxes.filter { isSkillMastered($0) }.count
+    }
+
+    /// The single skill to work on next: the least-practiced not-yet-mastered one.
+    /// nil once every skill is mastered.
+    var nextFocusSkillAxis: String? {
+        AppState.coachSkillAxes
+            .filter { !isSkillMastered($0) }
+            .min { (axisMasteryCounts[$0] ?? 0) < (axisMasteryCounts[$1] ?? 0) }
+    }
+
+    /// A simple level label derived purely from how many skills are mastered, so
+    /// the user sees a level that they earned and can clearly climb.
+    var promptSkillLevelLabel: String {
+        switch masteredSkillCount {
+        case 0...1: return promptLanguage == .korean ? "입문" : "Beginner"
+        case 2...3: return promptLanguage == .korean ? "중급" : "Intermediate"
+        default:    return promptLanguage == .korean ? "능숙" : "Advanced"
+        }
     }
 
     func updateInferredLearningProfile(_ profile: LearningProfile) {

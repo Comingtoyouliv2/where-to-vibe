@@ -15,6 +15,7 @@ struct SettingsView: View {
             accessControl
             languageSection
             apiSection
+            promptSkillsSection
             permissionSection
             footerActions
         }
@@ -56,8 +57,8 @@ struct SettingsView: View {
                 )
                 metricPill(
                     title: copy.apiStatusTitle,
-                    value: appState.hasOpenAIAPIKey ? copy.saved : copy.empty,
-                    color: appState.hasOpenAIAPIKey ? .cyan : .white.opacity(0.45)
+                    value: appState.hasCoachAPIKey ? copy.saved : copy.empty,
+                    color: appState.hasCoachAPIKey ? .cyan : .white.opacity(0.45)
                 )
                 metricPill(
                     title: copy.permissionStatusTitle,
@@ -184,14 +185,23 @@ struct SettingsView: View {
     private var apiSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                sectionHeader(copy.apiTitle, systemImage: "key.fill")
+                sectionHeader(appState.selectedAICoachProvider.keyLabel, systemImage: "key.fill")
                 Spacer(minLength: 0)
                 Label(copy.savedAutomatically, systemImage: "checkmark.circle.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(appState.hasOpenAIAPIKey ? .green : .white.opacity(0.38))
+                    .foregroundStyle(appState.hasCoachAPIKey ? .green : .white.opacity(0.38))
             }
 
-            SecureField("sk-...", text: $appState.openAIAPIKey)
+            // Choose which AI the coach uses; the key field below follows the choice.
+            Picker("", selection: $appState.selectedAICoachProvider) {
+                ForEach(AICoachProvider.allCases) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            SecureField(appState.selectedAICoachProvider.keyPlaceholder, text: selectedProviderKeyBinding)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.white)
@@ -202,7 +212,7 @@ struct SettingsView: View {
                         .fill(.black.opacity(0.26))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(appState.hasOpenAIAPIKey ? Color.green.opacity(0.32) : .white.opacity(0.12), lineWidth: 1)
+                                .stroke(appState.hasCoachAPIKey ? Color.green.opacity(0.32) : .white.opacity(0.12), lineWidth: 1)
                         )
                 )
 
@@ -213,6 +223,116 @@ struct SettingsView: View {
         }
         .padding(12)
         .background(cardBackground)
+    }
+
+    /// Binds the key field to whichever provider is selected, so OpenAI and
+    /// Claude keys are stored separately but edited in one field.
+    private var selectedProviderKeyBinding: Binding<String> {
+        switch appState.selectedAICoachProvider {
+        case .openAI: return $appState.openAIAPIKey
+        case .claude: return $appState.claudeAPIKey
+        }
+    }
+
+    // "Your prompt skills" — a visible learning path. Shows which prompt skills
+    // the user has mastered (by including them unprompted), overall progress +
+    // level, and the single next skill to focus on.
+    private var promptSkillsSection: some View {
+        let isKorean = appState.promptLanguage == .korean
+        let total = AppState.coachSkillAxes.count
+        let mastered = appState.masteredSkillCount
+        let rows = stride(from: 0, to: AppState.coachSkillAxes.count, by: 2).map { start in
+            Array(AppState.coachSkillAxes[start..<min(start + 2, AppState.coachSkillAxes.count)])
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionHeader(isKorean ? "내 프롬프트 스킬" : "Your prompt skills", systemImage: "chart.line.uptrend.xyaxis")
+                Spacer(minLength: 0)
+                Text(appState.promptSkillLevelLabel)
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.cyan.opacity(0.16)))
+                    .foregroundStyle(.cyan)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.10))
+                        Capsule()
+                            .fill(Color.cyan.opacity(0.85))
+                            .frame(width: proxy.size.width * (total == 0 ? 0 : CGFloat(mastered) / CGFloat(total)))
+                    }
+                }
+                .frame(height: 6)
+                Text("\(mastered)/\(total) \(isKorean ? "스킬 습득" : "skills mastered")")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+
+            ForEach(rows.indices, id: \.self) { rowIndex in
+                HStack(spacing: 6) {
+                    ForEach(rows[rowIndex], id: \.self) { axis in
+                        skillChip(axis)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if let nextAxis = appState.nextFocusSkillAxis {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.cyan.opacity(0.85))
+                    Text("\(isKorean ? "다음 목표" : "Next focus"): \(skillLabel(nextAxis))")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+            } else {
+                Text(isKorean ? "모든 스킬을 익혔어요! 🎉" : "All skills mastered! 🎉")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.green.opacity(0.9))
+            }
+        }
+        .padding(12)
+        .background(cardBackground)
+    }
+
+    private func skillChip(_ axis: String) -> some View {
+        let mastered = appState.isSkillMastered(axis)
+        let inProgress = !mastered && (appState.axisMasteryCounts[axis] ?? 0) > 0
+        let iconName = mastered ? "checkmark.circle.fill" : (inProgress ? "circle.lefthalf.filled" : "circle")
+        return HStack(spacing: 5) {
+            Image(systemName: iconName)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(mastered ? .green : (inProgress ? .cyan : .white.opacity(0.3)))
+            Text(skillLabel(axis))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(mastered ? .white.opacity(0.92) : .white.opacity(0.6))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(mastered ? Color.green.opacity(0.3) : .white.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+
+    private func skillLabel(_ axis: String) -> String {
+        let isKorean = appState.promptLanguage == .korean
+        switch axis {
+        case "goal": return isKorean ? "목표" : "Goal"
+        case "scope": return isKorean ? "범위" : "Scope"
+        case "context": return isKorean ? "맥락" : "Context"
+        case "constraints": return isKorean ? "제약" : "Constraints"
+        case "success criteria": return isKorean ? "완료 기준" : "Done-when"
+        default: return axis
+        }
     }
 
     private var permissionSection: some View {

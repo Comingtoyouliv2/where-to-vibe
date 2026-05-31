@@ -418,7 +418,7 @@ final class PromptCoachController {
         appState.updateInferredLearningProfile(profile)
         let userLevel = profile.userLevel
         let stage = profile.stage
-        let apiKey = appState.openAIAPIKey
+        let apiKey = appState.coachAPIKey
         let shouldForceCoach = isFrontmostAICodingApplication()
 
         suggestionTask = Task { [weak self] in
@@ -440,7 +440,10 @@ final class PromptCoachController {
                     return
                 }
                 let displayReason = response.suggestions.first?.reason ?? (response.signal.isVague ? response.signal.reason : nil)
-                self.appState.setSuggestions(response.suggestions, reason: displayReason)
+                self.appState.setSuggestions(response.suggestions, reason: displayReason, missingAxes: response.signal.missingAxes)
+                // Advance the learning path: credit the skills the user already
+                // included on their own in this draft.
+                self.appState.recordCoachedDraft(text: text, missingAxes: response.signal.missingAxes)
                 self.appState.idleDebugText = response.debugMessage
                 if response.suggestions.isEmpty {
                     self.debugLog("SuggestionEngine returned EMPTY (\(response.debugMessage)) → panel hidden. Check vagueness signal (isVague=\(response.signal.isVague), score=\(response.signal.score)) and SuggestionMode.", force: true)
@@ -494,7 +497,7 @@ final class PromptCoachController {
         )
         appState.updateInferredLearningProfile(profile)
 
-        let apiKey = appState.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = appState.coachAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard !apiKey.isEmpty else {
                 appState.idleDebugText = "Idle waiting: screen-aware suggestions need an API key"

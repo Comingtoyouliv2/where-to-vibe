@@ -3,7 +3,11 @@ import Combine
 import SwiftUI
 
 private final class PromptCoachMenuPanel: NSPanel {
+    // A borderless window returns false for both by default, which blocks
+    // keyboard focus — text fields (the API-key field) would never get a cursor.
+    // Allowing key + main makes the panel fully interactive once the app is active.
     override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }
 
 @MainActor
@@ -56,8 +60,13 @@ final class MenuBarController: NSObject {
     func showPanel() {
         ensurePanel()
         positionPanel()
+        // Bring the app forward and make the panel the key window so its text
+        // fields and controls actually receive focus and clicks. Without this,
+        // an accessory (menu-bar-only) app's panel shows but cannot take
+        // keyboard input — the OpenAI API-key field would never get a cursor and
+        // toggles/buttons wouldn't respond.
+        NSApp.activate(ignoringOtherApps: true)
         panel?.makeKeyAndOrderFront(nil)
-        panel?.orderFrontRegardless()
         installClickOutsideMonitor()
     }
 
@@ -88,8 +97,12 @@ final class MenuBarController: NSObject {
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
 
         let newPanel = PromptCoachMenuPanel(
+            // No .nonactivatingPanel here: this settings panel is opened
+            // deliberately by the user and must be able to become the key window
+            // so text fields (API key) and controls can take focus. (The
+            // cursor-side suggestion panel stays non-activating separately.)
             contentRect: hostingView.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )

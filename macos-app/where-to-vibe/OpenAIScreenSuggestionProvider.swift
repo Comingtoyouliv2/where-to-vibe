@@ -5,6 +5,20 @@ import Foundation
 struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
     private let responsesURL = URL(string: "https://api.openai.com/v1/responses")!
 
+    /// Full URL of our Worker's OpenAI proxy route (e.g.
+    /// https://where-to-vibe.<acct>.workers.dev/openai-responses), set in the
+    /// built app's Info.plist for public/demo builds. When present, calls go
+    /// through the proxy on OUR key; when absent, we hit OpenAI directly with
+    /// the user's own key.
+    private var proxyEndpoint: URL? {
+        guard let raw = AppBundleConfiguration.stringValue(forKey: "OpenAIProxyURL") else { return nil }
+        return URL(string: raw)
+    }
+    /// Optional shared token the proxy may require (sent as X-App-Token).
+    private var proxyAppToken: String? {
+        AppBundleConfiguration.stringValue(forKey: "OpenAIProxyToken")
+    }
+
     func refine(
         text: String,
         signal: VaguePromptSignal,
@@ -19,7 +33,13 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         try Task.checkCancellation()
 
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return [] }
+        // The user can pick OpenAI or Claude in Settings and supply their own key.
+        // The OpenAI proxy (if configured) applies ONLY to the OpenAI path.
+        let useClaude = selectedCoachProviderIsClaude()
+        let usingProxy = !useClaude && proxyEndpoint != nil
+        // With the OpenAI proxy the Worker injects the key; otherwise (and always
+        // for Claude) the user's own key is required.
+        guard usingProxy || !key.isEmpty else { return [] }
 
         let frontmostApp = await frontmostApplicationName()
         let screenDataURL = await captureCursorScreenDataURL()
@@ -39,53 +59,16 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
             hasScreenSnapshot: screenDataURL != nil
         )
 
-        var content: [[String: Any]] = [
-            [
-                "type": "input_text",
-                "text": prompt
-            ]
-        ]
-
-        if let screenDataURL {
-            content.append([
-                "type": "input_image",
-                "image_url": screenDataURL,
-                "detail": mode == .fastAI ? "low" : "auto"
-            ])
+        // Provider-specific HTTP only. Both return the model's raw text, which
+        // then flows through the SAME parse + map below, so OpenAI and Claude
+        // produce identical suggestion shapes.
+        let outputText: String
+        if useClaude {
+            outputText = try await requestClaudeOutput(prompt: prompt, screenDataURL: screenDataURL, key: key)
+        } else {
+            outputText = try await requestOpenAIOutput(prompt: prompt, screenDataURL: screenDataURL, key: key, usingProxy: usingProxy, mode: mode)
         }
 
-        let body: [String: Any] = [
-            "model": modelName(for: mode),
-            "input": [
-                [
-                    "role": "user",
-                    "content": content
-                ]
-            ],
-            "max_output_tokens": mode == .fastAI ? 260 : 420
-        ]
-
-        var request = URLRequest(url: responsesURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = mode == .fastAI ? 8 : 15
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try Task.checkCancellation()
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown API error"
-            throw NSError(
-                domain: "OpenAIScreenSuggestionProvider",
-                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                userInfo: [NSLocalizedDescriptionKey: message]
-            )
-        }
-
-        let outputText = try extractOutputText(from: data)
         let payload = try parseSuggestionPayload(from: outputText)
 
         // The model is allowed to explicitly choose silence. Silence is a first-class
@@ -105,6 +88,123 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
 
         guard let mappedSuggestion else { return [] }
         return [mappedSuggestion]
+    }
+
+    /// True when the user selected Claude in Settings. Read from UserDefaults so
+    /// the provider stays decoupled from AppState. Defaults to OpenAI.
+    private func selectedCoachProviderIsClaude() -> Bool {
+        UserDefaults.standard.string(forKey: "PromptCoach.aiProvider") == "claude"
+    }
+
+    /// OpenAI Responses API call (direct with the user's key, or via the Worker
+    /// proxy when configured). Returns the model's raw output text.
+    private func requestOpenAIOutput(
+        prompt: String,
+        screenDataURL: String?,
+        key: String,
+        usingProxy: Bool,
+        mode: SuggestionMode
+    ) async throws -> String {
+        var content: [[String: Any]] = [["type": "input_text", "text": prompt]]
+        if let screenDataURL {
+            content.append([
+                "type": "input_image",
+                "image_url": screenDataURL,
+                "detail": mode == .fastAI ? "low" : "auto"
+            ])
+        }
+        let body: [String: Any] = [
+            "model": modelName(for: mode),
+            "input": [["role": "user", "content": content]],
+            "max_output_tokens": mode == .fastAI ? 260 : 420
+        ]
+        var request = URLRequest(url: proxyEndpoint ?? responsesURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = mode == .fastAI ? 8 : 15
+        if usingProxy {
+            // The Worker holds the real OpenAI key; never send it from the client.
+            if let proxyAppToken {
+                request.setValue(proxyAppToken, forHTTPHeaderField: "X-App-Token")
+            }
+        } else {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "Unknown API error"
+            throw NSError(
+                domain: "OpenAIScreenSuggestionProvider",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+        return try extractOutputText(from: data)
+    }
+
+    /// Anthropic Messages API call (direct with the user's Claude key). Sends the
+    /// same prompt + screenshot and returns the model's raw output text.
+    private func requestClaudeOutput(
+        prompt: String,
+        screenDataURL: String?,
+        key: String
+    ) async throws -> String {
+        var content: [[String: Any]] = [["type": "text", "text": prompt]]
+        // captureCursorScreenDataURL returns "data:image/jpeg;base64,<...>";
+        // Anthropic wants the raw base64 + media type, so split off the prefix.
+        if let screenDataURL, let commaIndex = screenDataURL.firstIndex(of: ",") {
+            let base64 = String(screenDataURL[screenDataURL.index(after: commaIndex)...])
+            content.append([
+                "type": "image",
+                "source": ["type": "base64", "media_type": "image/jpeg", "data": base64]
+            ])
+        }
+        let body: [String: Any] = [
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 600,
+            "messages": [["role": "user", "content": content]]
+        ]
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "Unknown Anthropic API error"
+            throw NSError(
+                domain: "ClaudeScreenSuggestionProvider",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+        return try extractClaudeOutputText(from: data)
+    }
+
+    /// Pulls the assistant text out of an Anthropic Messages API response
+    /// ({ content: [{ type:"text", text:"..." }] }).
+    private func extractClaudeOutputText(from data: Data) throws -> String {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let content = json["content"] as? [[String: Any]] else {
+            throw parseError("Invalid Anthropic response")
+        }
+        let text = content
+            .compactMap { $0["text"] as? String }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw parseError("Anthropic response did not include text")
+        }
+        return text
     }
 
     private func parseSuggestionIntent(_ raw: String?) -> SuggestionIntent {
@@ -345,17 +445,20 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         """
             : """
         # Grounding (NON-NEGOTIABLE — this is what makes your advice accurate)
-        - The user's DRAFT is the ONLY source of truth for WHAT they are building.
+        - The user's DRAFT is the ONLY source of truth for WHAT they are writing about.
         - NEVER introduce a topic, product type, genre, or domain word that is not
           present in the draft. Example of the failure to avoid: the draft says
           "부트캠프" (a bootcamp — about learning / getting a job) and you reply with
           "로맨스소설 부트캠프 플랫폼". Romance novels have nothing to do with the draft.
           Do not stitch unrelated nouns together. Stay strictly on the draft's topic.
+        - The on-device "missing axes" below are software-leaning hints. Apply one ONLY if
+          it genuinely fits the draft's domain; ignore any that don't (most non-coding text
+          will not need "target user" or "success criteria").
         - The screenshot may show content unrelated to the draft (other tabs, ads,
           windows). If a screen noun is not clearly part of the SAME task as the
           draft, IGNORE it completely.
         - If the draft is too vague to even know the subject, choose ask_one_question
-          and ask what they want to build. Do NOT guess or invent a subject.
+          and ask what they actually mean or want. Do NOT guess or invent a subject.
         """
         let thinkingPolicy = isProactiveEmptyContext
             ? """
@@ -391,28 +494,57 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
           → what a good answer should contain.
         """
             : """
-        - When the idea is underspecified, DON'T just interrogate. Your DEFAULT is to MODEL a
-          concrete better version — the spirit of "저라면 이렇게 써볼 것 같아요": write the
-          improved prompt yourself, filling the missing pieces (who it's for, scope, the one
-          core thing, a constraint, what "done" looks like) with reasonable assumptions, and
-          briefly state those assumptions (e.g. "혼자 쓰는 용도라고 가정하면"). The user can
-          Tab-copy it. Prefer the tighten_draft / fill_missing_axis intents (which carry a
-          rewrite) over ask_one_question.
+        - When the draft is underspecified, DON'T just interrogate. Your DEFAULT is to MODEL a
+          concrete, more specific version of THEIR text — the spirit of "저라면 이렇게 써볼 것
+          같아요": rewrite it yourself, filling the missing specifics with reasonable
+          assumptions, and briefly state those assumptions. The missing specifics depend on
+          the draft's OWN domain — e.g. who/what it concerns, the precise ask, the scope, key
+          details or constraints, and what a good result would look like. Use only the
+          dimensions that genuinely fit their topic; never impose a product/MVP template on
+          text that isn't about building software. The user can Tab-copy it. Prefer
+          tighten_draft / fill_missing_axis over ask_one_question.
         """
 
         return """
         You are Where-to-vibe. You sit beside the user's cursor inside \(frontmostApp) and
-        help them write a slightly better next message to their AI coding tool.
+        help them make whatever they are currently writing — a prompt, a question, a
+        request, a message — clearer and more specific.
 
-        # Product philosophy (non-negotiable)
-        - Your job is NOT to do the work for them. Your job is to teach them, over time,
-          how to talk to AI coding agents.
-        - Three rungs on the ladder: Beginner → Intermediate → Advanced. You graduate
-          users off yourself. The right answer for an Advanced user is often "stop using
-          me, go to OpenCode / Claude Code / Cursor / Hermes / oh-my-openagent, and here
-          is the literal first prompt to paste."
-        - Be honest about AI limits. Multi-file reasoning, deployment, infra, or repo
-          context generally means chat-only AI will fail.
+        # TOP PRIORITY (this overrides everything below)
+        - Your single most important job: take the user's CURRENT draft and make it more
+          specific and concrete. ALWAYS give them the improved, exemplary version they can
+          actually use — never just diagnose "what's missing" without modeling the fix.
+        - The KIND of specificity to add depends ENTIRELY on what the draft is. It is almost
+          NEVER "target user" — that only applies when the draft is about building a product.
+          Match the move to the draft's nature:
+            • A casual statement ("I'm hungry", "I'm tired", "this is broken") → turn it into
+              a clear, ANSWERABLE request or question, adding the few details that make it
+              answerable (constraints, preferences, context).
+            • A question → add the context/constraints that let someone answer it well.
+            • A request/task ("write X", "plan Y", "fix Z") → add what exactly, any
+              constraints, and what a good result looks like — in that task's own terms.
+            • A piece of writing → clarify its goal and what "good" means FOR THAT writing.
+          Pick whichever ONE or TWO dimensions genuinely sharpen THIS draft. Do not reach for
+          "target user / MVP / success criteria" unless the draft is literally about building
+          software.
+        - Worked examples (notice the dimension changes with the draft):
+            • Draft: "I'm hungry"  →  rewrite: "I'm hungry and want something quick — can you
+              suggest 3 things I could make in 10 minutes from common fridge ingredients?"
+              (turned a statement into a specific, answerable request — NOT target-user advice)
+            • Draft: "make me an app"  →  rewrite: a concrete MVP spec (here target user/scope
+              DO fit, because it's about building software).
+            • Draft: "write a cover letter"  →  rewrite: "Write a cover letter for a [role] at
+              [company], highlighting [2 specific experiences], in a [tone], under 250 words."
+        - The SUBJECT and DOMAIN come ENTIRELY from the user's own words. Forcing
+          product/development framing (especially "target user") onto non-development text is
+          the #1 failure to avoid.
+
+        # Coaching philosophy (non-negotiable)
+        - Your job is NOT to do the work or answer the question for them. It is to teach
+          them, over time, how to express intent clearly so they get better results from AI
+          (or from anyone they're writing to).
+        - Be honest about limits. If the task genuinely needs more context than a single
+          message can carry, say so plainly.
         - Silence is a valid answer only when the draft is already actionable.
           If the draft exists and local signals say it is vague or needs guidance, prefer
           one small coaching move over silence.
@@ -463,12 +595,14 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
                                    "어떤 분야 부트캠프예요? 누구를 위한 거고, 끝나면 뭘 할 수
                                    있게 되나요?"  Bad (generic, ignore-able): "무엇을 만들고
                                    싶나요?"  Never ask more than 2 questions.
-             - point_at_wrong_tool — they're in the wrong app for this task (e.g.
-                                   chat-only when they need filesystem context).
-                                   Name the right tool.
-             - graduate_to_agent — this user is ready to leave chat-only AI. Name
-                                   OpenCode / Claude Code / Cursor / Hermes /
-                                   oh-my-openagent and write the literal first prompt.
+             - point_at_wrong_tool — ONLY when the draft is clearly a software/coding task
+                                   and they're in the wrong app for it (e.g. chat-only when
+                                   they need filesystem context). Name the right tool.
+                                   NEVER use this for non-coding text.
+             - graduate_to_agent — ONLY for a software/coding task where the user is ready to
+                                   leave chat-only AI. Name OpenCode / Claude Code / Cursor /
+                                   Hermes / oh-my-openagent and write the literal first prompt.
+                                   NEVER use this for non-coding text.
              - stay_silent       — use only when the draft is already concrete enough
                                    to send as-is AND local signals do not ask for coaching.
 

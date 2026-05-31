@@ -55,7 +55,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // Dump current coach state at launch so the user can see in Console.app
         // whether the panel can theoretically appear (the four conditions that
         // gate FloatingSuggestionPanel.show) without having to type anything.
-        print("[Coach/Boot] isEnabled=\(appState.isEnabled) hasAccessibilityPermission=\(appState.hasAccessibilityPermission) suggestionMode=\(appState.suggestionMode.rawValue) hasOpenAIAPIKey=\(appState.hasOpenAIAPIKey) language=\(appState.promptLanguage.rawValue) idleCoachEnabled=\(appState.idleCoachEnabled)")
+        print("[Coach/Boot] isEnabled=\(appState.isEnabled) hasAccessibilityPermission=\(appState.hasAccessibilityPermission) suggestionMode=\(appState.suggestionMode.rawValue) provider=\(appState.selectedAICoachProvider.rawValue) hasCoachAPIKey=\(appState.hasCoachAPIKey) language=\(appState.promptLanguage.rawValue) idleCoachEnabled=\(appState.idleCoachEnabled)")
 
         // Identity dump — if the bundle ID or executable path here does not match
         // the entry the user enabled in System Settings → Accessibility, the
