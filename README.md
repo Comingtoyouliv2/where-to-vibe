@@ -1,5 +1,11 @@
 # Where-to-vibe for macOS
 
+### [⬇️ Download Where-to-vibe (macOS)](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)
+
+[![Download Where-to-vibe](https://img.shields.io/badge/Download-Where--to--vibe-2563eb?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)
+
+> One click downloads the app. First launch needs a quick Gatekeeper approval — see [Download (macOS)](#download-macos) below.
+
 Where-to-vibe is a native macOS menu bar MVP for onboarding people into
 the AI coding agent era. It helps users learn how to think with AI:
 turning vague ideas into MVPs, specs, architecture prompts, debugging
