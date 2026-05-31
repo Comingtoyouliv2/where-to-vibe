@@ -1,10 +1,6 @@
 # Where-to-vibe for macOS
 
-### [⬇️ Download Where-to-vibe (macOS)](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)
-
-[![Download Where-to-vibe](https://img.shields.io/badge/Download-Where--to--vibe-2563eb?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)
-
-> One click downloads the app. First launch needs a quick Gatekeeper approval — see [Download (macOS)](#download-macos) below.
+> **Install in one Terminal command — see [Install (macOS)](#install-macos) below.**
 
 Where-to-vibe is a native macOS menu bar MVP for onboarding people into
 the AI coding agent era. It helps users learn how to think with AI:
@@ -59,29 +55,35 @@ Focus on the core workflow first: detect focused text, suggest a concrete rewrit
 and let the user accept it with Tab.
 ```
 
-## Download (macOS)
+## Install (macOS)
 
-Grab the prebuilt app — no Xcode required.
+No Xcode, no build. Paste this into **Terminal** — it installs and launches
+the app in one go:
 
-> **Demo build.** This release is **not yet notarized by Apple**, so macOS
-> Gatekeeper needs one manual approval on first launch (step 3 below).
+```bash
+curl -fsSL -o /tmp/Where-to-vibe.zip "https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip" && \
+mkdir -p ~/Applications && \
+unzip -oq /tmp/Where-to-vibe.zip -d ~/Applications && \
+xattr -dr com.apple.quarantine ~/Applications/Where-to-vibe.app && \
+open ~/Applications/Where-to-vibe.app
+```
 
-1. Download the latest build:
-   **[Where-to-vibe.zip](https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip)**
-   — or browse all
-   [Releases](https://github.com/Comingtoyouliv2/where-to-vibe/releases).
-2. Unzip it and move **`Where-to-vibe.app`** into your `/Applications` folder.
-3. Because the build is unsigned, clear the download quarantine once. Open
-   **Terminal** and run:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Where-to-vibe.app
-   ```
-4. Open the app. It lives in the **menu bar** (no Dock icon — `LSUIElement`).
-   On first launch a short tutorial walks you through granting
-   **Accessibility** permission: when System Settings opens, just flip the
-   `Where-to-vibe` switch on. That's the only click you need.
+What it does: downloads the latest build, unzips it to `~/Applications`, clears
+the macOS download quarantine, and launches it. The quarantine step is needed
+because this is a **demo build that isn't notarized by Apple yet** — running it
+from Terminal this way replaces the Gatekeeper "cannot be opened" prompt.
+
+After it launches:
+
+1. The app lives in the **menu bar** (no Dock icon). A short tutorial walks you
+   through granting **Accessibility** permission — when System Settings opens,
+   just flip the `Where-to-vibe` switch on.
+2. Open the menu-bar panel (✨) → **Settings** → paste your own **OpenAI API
+   key** to turn on the AI suggestions (`Fast AI` / `High Quality AI`).
 
 Requirements: macOS 14.2+ (Apple Silicon or Intel).
+
+To uninstall: `rm -rf ~/Applications/Where-to-vibe.app`
 
 ## Build from source (developers)
 
