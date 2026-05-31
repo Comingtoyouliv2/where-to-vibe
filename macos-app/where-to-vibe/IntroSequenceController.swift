@@ -9,7 +9,8 @@
 //   2. The user picks which AI they use (Claude / Codex / GPT) — clickable.
 //   3. A SIMULATED chat window for that AI appears (mock, in our overlay).
 //   4. The companion "types" a vague prompt ("앱을 만들어줘") into it.
-//   5. After a beat, a coach advice bubble appears — showing what the app does.
+//   5. A SIMULATED advice bubble appears inside the tutorial overlay.
+//      The live mouse-side coach starts only after the tutorial fully finishes.
 //   6. A finale chat ("같이 함께 만들어봐요") wraps it up.
 //
 //  Everything is simulated inside our own transparent overlay window — no
@@ -55,13 +56,14 @@ final class IntroSequenceController {
         self.menuBarController = menuBarController
     }
 
-    func play() {
-        guard overlayWindow == nil else { return }
-        guard let screen = NSScreen.main else { return }
+    func play() -> Bool {
+        guard overlayWindow == nil else { return false }
+        guard let screen = NSScreen.main else { return false }
         buildOverlay(on: screen)
         sequenceTask = Task { @MainActor in
             await runSequence(on: screen)
         }
+        return true
     }
 
     func stop() {
@@ -167,6 +169,7 @@ final class IntroSequenceController {
         model.showChoice = false
 
         // 4) The chosen AI's (simulated) chat window appears.
+        model.hasPastedRefinedPrompt = false
         model.showMock = true
         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { model.mockOpacity = 1 }
         await sleep(0.7)
@@ -177,57 +180,62 @@ final class IntroSequenceController {
         if Task.isCancelled { return }
         await sleep(0.5)
 
-        // 5.5) Waiting beat — "wait a moment and the advice comes".
+        // 5.5) Waiting beat — this is still tutorial-only. The live coach is
+        // not running during the intro, so no real mouse-side advice appears.
         model.showThinkingDots = true
         model.demoCaption = "조금만 기다리면…"
         await sleep(2.0)
         if Task.isCancelled { return }
 
-        // 6) Advice arrives — a concrete coaching suggestion, like the real app.
+        // 6) Simulated advice arrives inside the tutorial overlay.
         model.showThinkingDots = false
-        model.demoCaption = "이렇게 조언을 해줘요 👇"
+        model.demoCaption = "이런 식으로 조언을 보여줘요"
         model.showAdvice = true
         withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { model.adviceOpacity = 1 }
-        await sleep(5.0)  // time to read the advice
+        await sleep(7.0)
         if Task.isCancelled { return }
 
-        // 6.5) Tab → copy → paste motion.
-        model.demoCaption = "마음에 들면 — Tab 한 번이면 복사돼요"
+        // 6.5) Tab → copy → paste motion, still simulated inside tutorial.
+        model.demoCaption = "마음에 들면 Tab으로 복사해요"
         model.keyHint = "Tab"
         await pressKeyChip()
         if Task.isCancelled { return }
-        model.demoCaption = "복사됐어요 ✓  이제 붙여넣기!"
+        model.demoCaption = "복사됐어요. 이제 붙여넣기"
         model.keyHint = "⌘V"
         await pressKeyChip()
         if Task.isCancelled { return }
-        // The vague prompt is replaced by a concrete, coached version (paste).
+
+        // 7) The vague prompt is replaced by a concrete, coached version.
         model.keyHint = nil
-        withAnimation(.easeInOut(duration: 0.25)) { model.promptHighlight = true }
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            model.promptHighlight = true
+            model.hasPastedRefinedPrompt = true
+        }
         model.mockPrompt = Self.demoRefinedPrompt
-        await sleep(1.6)
+        await sleep(2.3)
         withAnimation(.easeOut(duration: 0.4)) { model.promptHighlight = false }
         await sleep(0.6)
         if Task.isCancelled { return }
 
-        // 7) Fade the whole demo out.
+        // 8) Fade the whole demo out.
         withAnimation(.easeIn(duration: 0.45)) { model.mockOpacity = 0 }
         await sleep(0.45)
         model.showMock = false
         model.showAdvice = false
         model.demoCaption = nil
 
-        // 8) Finale chat.
+        // 9) Finale chat.
         model.showFinale = true
         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { model.finaleOpacity = 1 }
         await sleep(4.0)
         if Task.isCancelled { return }
 
-        // 9) Finale fades out.
+        // 10) Finale fades out.
         withAnimation(.easeIn(duration: 0.5)) { model.finaleOpacity = 0 }
         await sleep(0.5)
         model.showFinale = false
 
-        // 10) Fly a cursor up to the menu bar to show where we live.
+        // 11) Fly a cursor up to the menu bar to show where we live.
         model.cursorPosition = CGPoint(x: screen.frame.width / 2, y: screen.frame.height / 2)
         model.showCursor = true
         let target = menuBarTargetPoint(on: screen)
@@ -236,7 +244,7 @@ final class IntroSequenceController {
         await sleep(1.3)
         if Task.isCancelled { return }
 
-        // 11) "Click" the menu bar — pulse + open the real panel.
+        // 12) "Click" the menu bar — pulse + open the real panel.
         model.showClickPulse = true
         withAnimation(.easeOut(duration: 0.5)) {
             model.clickPulseScale = 2.4
@@ -322,7 +330,15 @@ final class IntroSequenceController {
     """
 
     private static let demoPrompt = "앱을 만들어줘"
-    private static let demoRefinedPrompt = "혼자 쓰는 간단한 할 일 앱, 추가와 완료 체크만 되면 돼"
+    private static let demoRefinedPrompt = """
+    혼자 쓰는 데일리 할 일 앱의 첫 MVP를 만들어줘.
+
+    대상: 매일 아침 오늘 할 일을 3~7개만 정리하고 싶은 개인 사용자.
+    첫 화면: 오늘 날짜, 할 일 입력창, 오늘의 할 일 리스트, 완료된 항목 접기 영역.
+    핵심 기능: 할 일 추가/완료 체크/삭제, 완료율 표시, 앱을 껐다 켜도 오늘 목록 유지.
+    제약: macOS SwiftUI 앱으로 만들고, 외부 서버 없이 UserDefaults나 로컬 저장소만 사용.
+    완료 기준: 새 할 일을 추가하면 즉시 리스트에 보이고, 체크하면 완료 영역으로 이동하며, 재실행 후에도 상태가 남아 있어야 함.
+    """
 }
 
 /// Borderless transparent window that hosts the intro. Can become key (so the
@@ -348,6 +364,7 @@ final class IntroSequenceModel: ObservableObject {
     @Published var showMock: Bool = false
     @Published var mockOpacity: Double = 0
     @Published var mockPrompt: String = ""
+    @Published var hasPastedRefinedPrompt: Bool = false
 
     // Demo captions + key cues (the "wait → advice → Tab to copy" narration)
     @Published var demoCaption: String? = nil
@@ -499,7 +516,7 @@ private struct IntroOverlayView: View {
             Text("어떤 AI를 사용하세요?")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
-            Text("선택하면, 함께 한 번 써볼게요.")
+            Text("Claude를 클릭해보세요.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.6))
 
@@ -508,6 +525,14 @@ private struct IntroOverlayView: View {
                     aiChoiceButton(ai)
                 }
             }
+
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 10, weight: .bold))
+                Text("여기를 클릭해보세요")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.72))
         }
         .padding(28)
         .frame(width: 460)
@@ -571,7 +596,7 @@ private struct IntroOverlayView: View {
                 demoCaptionView(caption)
             }
             // Advice sits to the RIGHT of the chat window (not below).
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .center, spacing: 16) {
                 mockChatClient(ai)
                 if model.showAdvice {
                     adviceBubble
@@ -598,7 +623,7 @@ private struct IntroOverlayView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
             }
-            Text("\"앱을 만들어줘\"는 너무 막연해요. 무엇을 · 누가 · 핵심 기능 1개만 정해도 결과가 확 달라져요.")
+            Text("\"앱을 만들어줘\"는 너무 막연해요. 대상 사용자, 첫 화면, 핵심 기능, 저장 방식, 완료 기준을 넣으면 AI가 바로 구현 계획을 세울 수 있어요.")
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
                 .lineSpacing(4)
@@ -631,7 +656,7 @@ private struct IntroOverlayView: View {
             .padding(.top, 2)
         }
         .padding(16)
-        .frame(width: 360, alignment: .leading)
+        .frame(width: 420, alignment: .leading)
         .background(cardBackground)
     }
 
@@ -654,7 +679,10 @@ private struct IntroOverlayView: View {
     }
 
     private func mockChatClient(_ ai: IntroAI) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let chatWidth: CGFloat = model.hasPastedRefinedPrompt ? 500 : 440
+        let chatHeight: CGFloat = model.hasPastedRefinedPrompt ? 410 : 240
+
+        return VStack(alignment: .leading, spacing: 0) {
             mockChatHeader(ai)
             Divider().overlay(.white.opacity(0.1))
             // Response area — shows a "thinking" indicator while waiting.
@@ -665,10 +693,12 @@ private struct IntroOverlayView: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            Spacer(minLength: 0)
             mockInputBox(ai)
         }
-        .frame(width: 440, height: 240, alignment: .topLeading)
+        .frame(width: chatWidth, height: chatHeight, alignment: .topLeading)
         .background(mockChatBackground)
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: model.hasPastedRefinedPrompt)
     }
 
     private func thinkingDots(tint: Color) -> some View {
@@ -699,21 +729,27 @@ private struct IntroOverlayView: View {
     }
 
     private func mockInputBox(_ ai: IntroAI) -> some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 2) {
-                Text(model.mockPrompt)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.92))
-                Rectangle()
-                    .fill(.white.opacity(0.7))
-                    .frame(width: 2, height: 16)
-                Spacer(minLength: 0)
-                if let keyHint = model.keyHint {
-                    keyChip(keyHint)
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 2) {
+                    Text(model.mockPrompt)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                    Rectangle()
+                        .fill(.white.opacity(0.7))
+                        .frame(width: 2, height: 16)
+                    Spacer(minLength: 0)
+                    if let keyHint = model.keyHint {
+                        keyChip(keyHint)
+                    }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(mockInputBackground(ai))
             Image(systemName: "arrow.up.circle.fill")
                 .font(.system(size: 24))
