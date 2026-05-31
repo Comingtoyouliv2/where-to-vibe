@@ -449,6 +449,13 @@ struct FloatingSuggestionPanelView: View {
         let reportContentSize = onContentSizeChange
 
         VStack(alignment: .leading, spacing: 9) {
+            // Gap-first teaching: name the dimensions the user's draft is missing
+            // BEFORE showing the rewrite, so they learn the checklist instead of
+            // just copying a finished answer.
+            if !appState.missingAxes.isEmpty {
+                missingAxesCallout
+            }
+
             HStack(alignment: .top, spacing: 8) {
                 coachGlyph
 
@@ -578,6 +585,94 @@ struct FloatingSuggestionPanelView: View {
         // EmptyView here.
         KeyCap("Tab")
         Text("copy")
+    }
+
+    // Gap-first checklist shown above the rewrite. Lists the missing dimensions
+    // (max 4, two per row) so the user learns the prompt checklist by name.
+    private var missingAxesCallout: some View {
+        let axes = Array(appState.missingAxes.prefix(4))
+        let isKorean = appState.promptLanguage == .korean
+        let rows = stride(from: 0, to: axes.count, by: 2).map { start in
+            Array(axes[start..<min(start + 2, axes.count)])
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.cyan.opacity(0.85))
+                Text(isKorean ? "이걸 채우면 바로 실행돼요" : "Add these to make it buildable")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            ForEach(rows.indices, id: \.self) { rowIndex in
+                HStack(spacing: 6) {
+                    ForEach(rows[rowIndex], id: \.self) { axis in
+                        missingAxisChip(axis, isKorean: isKorean)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.cyan.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color.cyan.opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
+    private func missingAxisChip(_ axis: String, isKorean: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(Self.axisIcon(axis))
+                .font(.system(size: 10))
+            Text(Self.axisLabel(axis, isKorean: isKorean))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(.white.opacity(0.07))
+                .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+        )
+    }
+
+    private static func axisIcon(_ axis: String) -> String {
+        switch axis {
+        case "goal": return "🎯"
+        case "scope": return "🧩"
+        case "target user": return "👤"
+        case "success criteria": return "✅"
+        case "constraints": return "⛔️"
+        case "context": return "🧭"
+        default: return "•"
+        }
+    }
+
+    // Domain-neutral labels: these are about clarifying ANY piece of writing, not
+    // just software. Avoid product jargon like "target user" / "success criteria".
+    private static func axisLabel(_ axis: String, isKorean: Bool) -> String {
+        if isKorean {
+            switch axis {
+            case "goal": return "목표"
+            case "scope": return "범위"
+            case "target user": return "누구를 위한지"
+            case "success criteria": return "좋은 결과 기준"
+            case "constraints": return "제약"
+            case "context": return "맥락"
+            default: return axis
+            }
+        }
+        switch axis {
+        case "target user": return "who it's for"
+        case "success criteria": return "what 'good' means"
+        default: return axis
+        }
     }
 
     private var coachGlyph: some View {

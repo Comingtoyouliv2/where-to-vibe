@@ -22,6 +22,19 @@
 	     as a wrangler secret; nothing sensitive ships in this app. -->
 	<key>WorkerBaseURL</key>
 	<string>http://localhost:8787</string>
+	<!-- PUBLIC/DEMO builds only: full URL of your Worker's OpenAI proxy route.
+	     When set, the suggestion card runs on YOUR OpenAI key (held server-side
+	     by the Worker) so testers don't paste their own key, and Fast AI is the
+	     default mode. Leave EMPTY for dev builds — then the card uses the user's
+	     own key from Settings.
+	     Example: https://where-to-vibe.<your-account>.workers.dev/openai-responses -->
+	<key>OpenAIProxyURL</key>
+	<string></string>
+	<!-- Optional shared token. If your Worker sets APP_SHARED_TOKEN, put the same
+	     value here so the app sends it as X-App-Token. Weak (ships in the binary)
+	     but filters drive-by abuse; the real ceiling is your OpenAI spend cap. -->
+	<key>OpenAIProxyToken</key>
+	<string></string>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>

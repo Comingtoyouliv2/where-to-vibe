@@ -37,6 +37,17 @@ interface Env {
   ASSEMBLYAI_API_KEY: string;
   COACH_MODEL: string;
   CLASSIFIER_MODEL: string;
+  // OpenAI proxy (so the app's suggestion card can run on OUR key for public
+  // testing instead of each user pasting their own key).
+  OPENAI_API_KEY: string;
+  // Server-forced model + output cap so a tampered client can't request an
+  // expensive model or a huge (costly) response. Optional — sane defaults.
+  SUGGESTION_MODEL?: string;
+  MAX_OUTPUT_TOKENS?: string;
+  // Optional shared token: if set, the app must send it as X-App-Token. Weak
+  // (it ships in the binary) but filters drive-by abuse. Real cost ceiling is
+  // the hard spend cap on the OpenAI account.
+  APP_SHARED_TOKEN?: string;
 }
 
 interface CoachRequest {
@@ -75,6 +86,10 @@ export default {
         case "/spec":
           return await handleSpec(request, env);
 
+        // --- OpenAI suggestion-card proxy (runs on our key) ---
+        case "/openai-responses":
+          return await handleOpenAIResponses(request, env);
+
         // --- upstream routes kept for backward compat ---
         case "/chat":
           return await handleChat(request, env);
@@ -92,6 +107,58 @@ export default {
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// /openai-responses — proxy the suggestion card's OpenAI Responses call on our
+// key, so public testers don't have to paste their own key.
+//
+// Cost guardrails (so a tampered/abusive client can't run up the bill):
+//   1. Optional shared-token gate (X-App-Token).
+//   2. The model is FORCED server-side — the client can't pick an expensive one.
+//   3. max_output_tokens is clamped to a ceiling.
+// The real hard ceiling is the spend cap you set on the OpenAI account.
+// ---------------------------------------------------------------------------
+async function handleOpenAIResponses(request: Request, env: Env): Promise<Response> {
+  if (env.APP_SHARED_TOKEN && request.headers.get("x-app-token") !== env.APP_SHARED_TOKEN) {
+    return jsonResponse(401, { error: "unauthorized" });
+  }
+
+  let payload: any;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse(400, { error: "invalid JSON body" });
+  }
+  if (typeof payload !== "object" || payload === null) {
+    return jsonResponse(400, { error: "expected a JSON object body" });
+  }
+
+  // Force a known, cheap model and clamp the response length regardless of what
+  // the client sent — this is the main per-request cost control.
+  payload.model = env.SUGGESTION_MODEL || "gpt-5.4-mini";
+  const outputCap = Number(env.MAX_OUTPUT_TOKENS || "500");
+  if (typeof payload.max_output_tokens !== "number" || payload.max_output_tokens > outputCap) {
+    payload.max_output_tokens = outputCap;
+  }
+
+  const upstream = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    console.error(`[/openai-responses] OpenAI ${upstream.status}: ${responseText.slice(0, 500)}`);
+  }
+  return new Response(responseText, {
+    status: upstream.status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // /coach — main round-trip
