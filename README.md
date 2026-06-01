@@ -63,12 +63,15 @@ the app in one go:
 ```bash
 curl -fsSL -o /tmp/Where-to-vibe.zip "https://github.com/Comingtoyouliv2/where-to-vibe/releases/latest/download/Where-to-vibe.zip" && \
 mkdir -p ~/Applications && \
-unzip -oq /tmp/Where-to-vibe.zip -d ~/Applications && \
-xattr -dr com.apple.quarantine ~/Applications/Where-to-vibe.app && \
+rm -rf ~/Applications/Where-to-vibe.app && \
+ditto -x -k /tmp/Where-to-vibe.zip ~/Applications/ && \
+xattr -dr com.apple.quarantine ~/Applications/Where-to-vibe.app 2>/dev/null; \
 open ~/Applications/Where-to-vibe.app
 ```
 
-What it does: downloads the latest build, unzips it to `~/Applications`, clears
+What it does: downloads the latest build, extracts it to `~/Applications` with
+`ditto` (which preserves the app bundle's symlinks/signature — `unzip` can
+corrupt them so the app won't open), clears
 the macOS download quarantine, and launches it. The quarantine step is needed
 because this is a **demo build that isn't notarized by Apple yet** — running it
 from Terminal this way replaces the Gatekeeper "cannot be opened" prompt.

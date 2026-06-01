@@ -43,6 +43,11 @@ jobs:
           # Ad-hoc signing ("-") so it builds on CI without an Apple Developer
           # certificate. The app is not notarized; the README install command
           # clears the download quarantine so Gatekeeper still lets it open.
+          # ENABLE_HARDENED_RUNTIME=NO: with hardened runtime on, macOS Library
+          # Validation refuses to load Sparkle.framework (signed by Sparkle's
+          # team) into an ad-hoc app (no team) — "different Team IDs" — and the
+          # app crashes on launch. A demo build isn't notarized, so we don't need
+          # hardened runtime; turning it off lets the embedded framework load.
           xcodebuild \
             -project macos-app/where-to-vibe.xcodeproj \
             -scheme where-to-vibe \
@@ -55,7 +60,17 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
+            ENABLE_HARDENED_RUNTIME=NO \
             build
+
+      - name: Re-sign ad-hoc so embedded frameworks match the app's identity
+        run: |
+          set -euxo pipefail
+          APP_PATH="build/Build/Products/Release/Where-to-vibe.app"
+          # Force ad-hoc re-sign of the whole bundle (frameworks/XPC included) so
+          # everything shares one identity (no Team ID), satisfying the loader.
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Zip the .app
         run: |
