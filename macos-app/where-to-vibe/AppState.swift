@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 enum PromptLanguage: String, CaseIterable, Identifiable {
     case english
