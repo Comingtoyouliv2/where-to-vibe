@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AnthropicAPIKey</key>
+	<string></string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.2</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Used only if you opt into the legacy voice mode.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Used by Where-to-vibe to create screen-aware AI suggestions when Fast AI or High Quality AI is enabled.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Used only if you opt into the legacy voice mode.</string>
+	<key>OpenAIProxyURL</key>
+	<string>https://where-to-vibe.comingtoyouliv2.workers.dev/openai-responses</string>
+	<key>OpenAIProxyToken</key>
+	<string></string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>/l3d2rw5ZZFRU3AadP/w2Zf8FHfhA6bKv16BQOV5OSk=</string>
+	<key>VoiceTranscriptionProvider</key>
+	<string>apple</string>
+	<key>WorkerBaseURL</key>
+	<string>https://where-to-vibe.comingtoyouliv2.workers.dev</string>
+</dict>
+</plist>

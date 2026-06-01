@@ -13,6 +13,7 @@ final class PromptCoachController {
     private let floatingPanel: FloatingSuggestionPanel
     private let contextStatusPanel: ContextStatusPanel
     private let acceptController = SuggestionAcceptController()
+    private let screenStabilityDetector = ScreenStabilityDetector()
 
     private var pollTimer: Timer?
     private var permissionTimer: Timer?
@@ -178,6 +179,22 @@ final class PromptCoachController {
 
         acceptController.observeKeyInput = { [weak self] input in
             self?.recordFallbackInput(input)
+        }
+
+        // ←/→ flip the advice card between "how to think" (page 0) and the
+        // concrete answer (page 1). Only navigable when a concrete answer
+        // (a rewrite) exists.
+        acceptController.canNavigatePages = { [weak self] in
+            guard let self, self.isKeyHandlingActive,
+                  let suggestion = self.appState.selectedSuggestion else { return false }
+            return self.appState.shouldShowSuggestionPanel
+                && !suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        acceptController.navigatePage = { [weak self] delta in
+            guard let self else { return }
+            let next = self.appState.suggestionPage + delta
+            self.appState.suggestionPage = max(0, min(1, next))
         }
     }
 
@@ -538,6 +555,27 @@ final class PromptCoachController {
 
         suggestionTask = Task { [weak self] in
             guard let self else { return }
+
+            // Don't coach while the AI is still generating its answer. Wait until
+            // the screen has settled AND it's a screen we haven't already advised
+            // on; otherwise skip this cycle (the idle timer re-checks shortly).
+            // `force` (the menu's idle-test) bypasses the gate so testing always
+            // shows something.
+            let settledScreenFingerprint: [UInt8]?
+            if force {
+                settledScreenFingerprint = nil
+            } else {
+                switch await self.proactiveCoachingReadiness() {
+                case .notReady:
+                    return
+                case .readyWithoutFingerprint:
+                    settledScreenFingerprint = nil
+                case .ready(let fingerprint):
+                    settledScreenFingerprint = fingerprint
+                }
+            }
+            guard !Task.isCancelled else { return }
+
             let preferredAIMode: SuggestionMode = self.appState.suggestionMode == .highQualityAI
                 ? .highQualityAI
                 : .fastAI
@@ -567,11 +605,59 @@ final class PromptCoachController {
                 }
 
                 self.lastIdleNudgeText = suggestion.text
+                // Remember the settled screen we just advised on so we don't keep
+                // re-advising the same finished answer.
+                if let settledScreenFingerprint {
+                    self.screenStabilityDetector.recordAdvised(settledScreenFingerprint)
+                }
                 self.appState.setSuggestions([suggestion], reason: suggestion.reason)
                 self.showPanelAtBestAnchor()
                 self.debugLog("Proactive idle screen suggestion shown.", force: true)
             }
         }
+    }
+
+    /// Whether we are in a screen state where proactive coaching should fire.
+    /// Captures two quick fingerprints of the cursor screen: if they differ, the
+    /// AI is still generating (or the screen is otherwise animating) and we hold
+    /// off; if they match, the answer has settled and we proceed — unless the
+    /// settled screen is the same one we already advised on.
+    private enum ProactiveCoachingReadiness {
+        case ready(fingerprint: [UInt8])  // settled + novel → coach now
+        case readyWithoutFingerprint      // couldn't read screen → proceed anyway
+        case notReady                     // still changing or already-advised → skip
+    }
+
+    private func proactiveCoachingReadiness() async -> ProactiveCoachingReadiness {
+        guard let firstFingerprint = await screenStabilityDetector.captureFingerprint() else {
+            // Can't fingerprint the screen (permission/capture issue). Don't block
+            // coaching forever — let the engine try (it captures its own image).
+            return .readyWithoutFingerprint
+        }
+
+        // Short gap so streaming text visibly advances between the two frames.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        if Task.isCancelled { return .notReady }
+
+        guard let secondFingerprint = await screenStabilityDetector.captureFingerprint() else {
+            return .readyWithoutFingerprint
+        }
+
+        guard screenStabilityDetector.isStable(firstFingerprint, secondFingerprint) else {
+            appState.idleDebugText = "Idle waiting: AI still generating (screen changing)"
+            debugLog("Proactive idle skipped — screen still changing (AI likely generating). Re-checking soon.", force: true)
+            // Re-arm the idle timer so we check again once it may have settled.
+            scheduleIdleNudgeIfNeeded(force: false)
+            return .notReady
+        }
+
+        guard screenStabilityDetector.isNovelComparedToLastAdvised(secondFingerprint) else {
+            appState.idleDebugText = "Idle skipped: screen unchanged since last advice"
+            debugLog("Proactive idle skipped — screen unchanged since last advice.", force: true)
+            return .notReady
+        }
+
+        return .ready(fingerprint: secondFingerprint)
     }
 
     private func showPanelAtBestAnchor() {
@@ -654,6 +740,9 @@ final class PromptCoachController {
         lastCaretFrame = nil
         lastIdleNudgeText = ""
         idleTask?.cancel()
+        // Context changed (app switch / message sent) — the next settled screen
+        // should be treated as a fresh answer worth advising on again.
+        screenStabilityDetector.reset()
     }
 
     private func ignoredFrontmostApplicationReason() -> String? {

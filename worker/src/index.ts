@@ -40,6 +40,14 @@ interface Env {
   // OpenAI proxy (so the app's suggestion card can run on OUR key for public
   // testing instead of each user pasting their own key).
   OPENAI_API_KEY: string;
+  // Optional upstream base URL for OpenAI. Defaults to https://api.openai.com/v1.
+  // Point this at a Cloudflare AI Gateway OpenAI endpoint to route around the
+  // "unsupported_country_region_territory" 403 that OpenAI returns for some
+  // Cloudflare Worker egress regions.
+  OPENAI_BASE_URL?: string;
+  // Optional Cloudflare AI Gateway token. Required only when OPENAI_BASE_URL
+  // points at an AUTHENTICATED AI Gateway; sent as cf-aig-authorization.
+  CF_AIG_TOKEN?: string;
   // Server-forced model + output cap so a tampered client can't request an
   // expensive model or a huge (costly) response. Optional — sane defaults.
   SUGGESTION_MODEL?: string;
@@ -141,12 +149,26 @@ async function handleOpenAIResponses(request: Request, env: Env): Promise<Respon
     payload.max_output_tokens = outputCap;
   }
 
-  const upstream = await fetch("https://api.openai.com/v1/responses", {
+  // Upstream base URL. Defaults to OpenAI directly, but can be pointed at a
+  // Cloudflare AI Gateway OpenAI endpoint
+  // (https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/openai) so the
+  // request egresses from an OpenAI-supported region. This is what fixes the
+  // "unsupported_country_region_territory" 403 you get calling OpenAI straight
+  // from a Worker. Set OPENAI_BASE_URL as a Worker var to switch.
+  const openAIBaseURL = (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const upstreamHeaders: Record<string, string> = {
+    authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    "content-type": "application/json",
+  };
+  // When the request goes through an AUTHENTICATED Cloudflare AI Gateway, it also
+  // requires the gateway's own token. Set CF_AIG_TOKEN as a Worker secret to send
+  // it. (Not needed if the gateway has authentication turned off.)
+  if (env.CF_AIG_TOKEN) {
+    upstreamHeaders["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  }
+  const upstream = await fetch(`${openAIBaseURL}/responses`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json",
-    },
+    headers: upstreamHeaders,
     body: JSON.stringify(payload),
   });
 

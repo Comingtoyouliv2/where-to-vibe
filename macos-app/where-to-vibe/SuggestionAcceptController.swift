@@ -13,11 +13,14 @@ enum ObservedKeyInput {
 final class SuggestionAcceptController {
     private let tabKeyCode: Int64 = 0x30
     private let escapeKeyCode: Int64 = 0x35
+    private let leftArrowKeyCode: Int64 = 0x7B
+    private let rightArrowKeyCode: Int64 = 0x7C
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isConsumingTabPress = false
     private var isConsumingEscapePress = false
+    private var isConsumingArrowPress = false
 
     var shouldHandleKeys: (() -> Bool)?
     var shouldObserveKeys: (() -> Bool)?
@@ -25,6 +28,11 @@ final class SuggestionAcceptController {
     var accept: (() -> Void)?
     var dismiss: (() -> Void)?
     var observeKeyInput: ((ObservedKeyInput) -> Void)?
+    /// True when the advice card has more than one page, so ←/→ should flip it
+    /// (and be consumed) instead of passing through to the user's app.
+    var canNavigatePages: (() -> Bool)?
+    /// Flip the advice card by `delta` pages (+1 = right, -1 = left).
+    var navigatePage: ((Int) -> Void)?
 
     /// Creates the Tab/Esc CGEvent tap. Returns true if the tap is up (newly
     /// created or already running), false if creation failed. The caller MUST
@@ -148,6 +156,28 @@ final class SuggestionAcceptController {
             }
             if isConsumingEscapePress {
                 isConsumingEscapePress = false
+                return nil
+            }
+            return Unmanaged.passUnretained(event)
+
+        case leftArrowKeyCode, rightArrowKeyCode:
+            // Flip the advice card's page. Only consume the arrow (so the user's
+            // app doesn't move its cursor) when the card actually has a 2nd page;
+            // otherwise let the arrow pass through normally.
+            if eventType == .keyDown {
+                guard canNavigatePages?() == true else {
+                    isConsumingArrowPress = false
+                    return Unmanaged.passUnretained(event)
+                }
+                isConsumingArrowPress = true
+                let delta: Int = (keyCode == rightArrowKeyCode) ? 1 : -1
+                DispatchQueue.main.async { [weak self] in
+                    self?.navigatePage?(delta)
+                }
+                return nil
+            }
+            if isConsumingArrowPress {
+                isConsumingArrowPress = false
                 return nil
             }
             return Unmanaged.passUnretained(event)
