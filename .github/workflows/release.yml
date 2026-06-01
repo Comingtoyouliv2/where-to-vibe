@@ -1,0 +1,71 @@
+name: Release macOS app
+
+# Builds the menu-bar app and publishes Where-to-vibe.zip to a GitHub Release,
+# so end users can install with the one-line `curl … releases/latest/download/
+# Where-to-vibe.zip` command in the README — no Xcode, no clone, no build.
+#
+# Trigger either by pushing a version tag (e.g. `git tag v0.1.1 && git push
+# origin v0.1.1`) or by running this workflow manually and entering a tag.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.1.1)"
+        required: true
+        default: "v0.1.1"
+
+permissions:
+  contents: write # needed to create the Release and upload the asset
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Use the latest stable Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+
+      - name: Build the app (Release, ad-hoc signed)
+        run: |
+          set -euxo pipefail
+          # Ad-hoc signing ("-") so it builds on CI without an Apple Developer
+          # certificate. The app is not notarized; the README install command
+          # clears the download quarantine so Gatekeeper still lets it open.
+          xcodebuild \
+            -project macos-app/where-to-vibe.xcodeproj \
+            -scheme where-to-vibe \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+      - name: Zip the .app
+        run: |
+          set -euxo pipefail
+          APP_PATH="build/Build/Products/Release/Where-to-vibe.app"
+          test -d "$APP_PATH"
+          # --keepParent so the zip contains "Where-to-vibe.app/…" at the top,
+          # matching the README's `unzip -d ~/Applications` + open flow.
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" Where-to-vibe.zip
+          ls -lh Where-to-vibe.zip
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: Where-to-vibe.zip
+          fail_on_unmatched_files: true
+          make_latest: true
