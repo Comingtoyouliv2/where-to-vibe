@@ -466,19 +466,27 @@ struct FloatingSuggestionPanelView: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .fill(.regularMaterial)
                 .overlay(
-                    // Slight dark tint so white text stays legible over the glass
-                    // regardless of what's behind it.
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(.black.opacity(0.25))
-                )
-                .overlay(
-                    // Soft top-lit sheen — the glass highlight.
+                    // Very light tint only — just enough to seat white text on
+                    // the frosted glass. Keep it minimal so the card reads as
+                    // glass, not a black panel. A faint top-to-bottom gradient
+                    // adds depth without darkening the whole thing.
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [.white.opacity(0.12), .white.opacity(0.0)],
+                                colors: [.white.opacity(0.10), .black.opacity(0.10)],
                                 startPoint: .top,
                                 endPoint: .bottom
+                            )
+                        )
+                )
+                .overlay(
+                    // Top-lit sheen — the glass highlight.
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [.white.opacity(0.22), .white.opacity(0.0)],
+                                startPoint: .top,
+                                endPoint: .center
                             )
                         )
                         .allowsHitTesting(false)
@@ -488,7 +496,7 @@ struct FloatingSuggestionPanelView: View {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
                         .strokeBorder(
                             LinearGradient(
-                                colors: [.white.opacity(0.45), .white.opacity(0.12)],
+                                colors: [.white.opacity(0.6), .white.opacity(0.15)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             ),
