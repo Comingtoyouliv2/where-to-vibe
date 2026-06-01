@@ -23,13 +23,19 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16.x. The project is in Xcode 16's project format
+    # (objectVersion 77), which Xcode 15.4 (the macos-14 default) cannot open.
+    runs-on: macos-15
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
 
-      - name: Use the latest stable Xcode
-        run: sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+      - name: Select the newest installed Xcode (need 16+ for project format 77)
+        run: |
+          set -euxo pipefail
+          newest=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest/Contents/Developer"; fi
+          xcodebuild -version
 
       - name: Build the app (Release, ad-hoc signed)
         run: |
