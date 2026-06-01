@@ -72,7 +72,27 @@ final class PromptCoachController {
         "visual studio code",
         "warp",
         "xcode",
-        "zed"
+        "zed",
+        // Web browsers: most people chat with Claude/ChatGPT/Gemini/Perplexity
+        // in a browser tab, not the desktop app. Without these, the screen-aware
+        // "summarize the AI's answer" coaching never armed in a browser. The
+        // vision model still stays silent (case C) when no AI answer/work is on
+        // screen, so general browsing doesn't trigger noise.
+        "safari",
+        "chrome",
+        "arc",
+        "edge",
+        "brave",
+        "firefox",
+        "vivaldi",
+        "opera",
+        "orion",
+        "dia",
+        "comet",
+        // AI assistants that ship their own desktop app
+        "gemini",
+        "perplexity",
+        "copilot"
     ]
 
     init(appState: AppState) {
