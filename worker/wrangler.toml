@@ -18,3 +18,15 @@ CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
 # The "default" gateway is auto-created on the first request. The worker appends
 # "/responses" to this base.
 OPENAI_BASE_URL = "https://gateway.ai.cloudflare.com/v1/1df6158c410d60cc3217209e4cc6ef47/default/openai"
+
+# Accepted-advice event log (Cloudflare D1). The /events route stays disabled
+# (returns 503) until this binding exists. To enable:
+#   1) cd worker && npx wrangler d1 create wtv-events
+#   2) paste the printed database_id below and uncomment this block
+#   3) npx wrangler d1 migrations apply wtv-events --remote
+#   4) npx wrangler deploy
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "wtv-events"
+# database_id = "PASTE_DATABASE_ID_HERE"
+# migrations_dir = "migrations"

@@ -457,15 +457,53 @@ struct FloatingSuggestionPanelView: View {
         .padding(.vertical, 10)
         .frame(width: FloatingSuggestionLayout.contentWidth, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+        // Glass-morphism: a frosted-glass card. `.regularMaterial` blurs the
+        // content behind the panel enough that the background is no longer
+        // legible (just a soft frosted hint), while a thin dark tint keeps the
+        // white text readable and a top-lit highlight + bright edge give the
+        // glassy sheen.
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.black.opacity(0.74))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(.regularMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(.white.opacity(0.12), lineWidth: 1)
+                    // Very light tint only — just enough to seat white text on
+                    // the frosted glass. Keep it minimal so the card reads as
+                    // glass, not a black panel. A faint top-to-bottom gradient
+                    // adds depth without darkening the whole thing.
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [.white.opacity(0.10), .black.opacity(0.10)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
                 )
-                .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 10)
+                .overlay(
+                    // Top-lit sheen — the glass highlight.
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [.white.opacity(0.22), .white.opacity(0.0)],
+                                startPoint: .top,
+                                endPoint: .center
+                            )
+                        )
+                        .allowsHitTesting(false)
+                )
+                .overlay(
+                    // Bright glass edge, brighter at the top.
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.6), .white.opacity(0.15)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.30), radius: 22, x: 0, y: 12)
         )
         // While the typewriter appends a character every ~14ms, a springy
         // height animation never settles — each new character restarts the
