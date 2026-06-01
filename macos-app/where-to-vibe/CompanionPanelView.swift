@@ -8,6 +8,7 @@
 //
 
 import AVFoundation
+import Combine
 import SwiftUI
 
 struct CompanionPanelView: View {

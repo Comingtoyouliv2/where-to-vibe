@@ -20,6 +20,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 /// Borderless transparent NSWindow that never takes focus, sized to the

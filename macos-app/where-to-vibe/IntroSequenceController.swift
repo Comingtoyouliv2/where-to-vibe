@@ -19,6 +19,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 /// The AI options offered in the intro.
