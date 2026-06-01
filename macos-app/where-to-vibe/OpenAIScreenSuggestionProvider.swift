@@ -395,7 +395,7 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
             : "Write in concise, natural English."
         let qualityNote: String
         if isProactiveEmptyContext {
-            qualityNote = "This is proactive idle coaching from the screen. Act like a critical thinking partner diagnosing the user's current bottleneck. Do NOT default to MVP, target user, or product discovery unless the screen is genuinely blank/initial. Prefer the user's current visible work: errors, code, docs, UI, design, tests, diff, or partially built feature."
+            qualityNote = "This is proactive idle coaching from the screen. If an AI assistant's ANSWER is visible (the user already chatted), READ that answer and react to it like a critical thinking partner — what's missing, risky, or unverified, and what to ask next. Otherwise diagnose the visible work (code/error/diff/docs/UI/design). Do NOT use MVP / target-user / product-discovery framing unless the screen is truly blank with NO AI conversation and no work at all."
         } else if mode == .fastAI {
             qualityNote = "Prefer a fast, practical move over perfect completeness."
         } else if hasScreenSnapshot {
@@ -409,29 +409,43 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         let emptyContextPolicy = isProactiveEmptyContext
             ? """
 
-        # Proactive idle mode: empty input, screen is the signal
-        The user's chat box is empty because they are pausing and thinking. Treat this as:
-        "The user is stuck at a bottleneck in the visible work and needs the next useful question."
+        # Proactive idle mode: empty input, the SCREEN is the signal
+        The chat box is empty because the user is pausing to think. Read the screen and decide
+        which situation it is — this ordering matters:
 
-        Your job:
-        1) Recognize what the user is currently doing from the screen.
-        2) Think critically: identify 2-3 plausible current bottlenecks, contradictions,
-           risks, missing checks, or bad assumptions visible on screen.
-        3) Pick the highest-leverage bottleneck and propose a concrete next prompt.
-        4) Include a compact example of what a good AI answer should cover, so the user can
-           judge whether the response actually helped.
+        A) An AI assistant's ANSWER / response is visible (the user already asked something and
+           got a reply). This is the COMMON case right after your coaching. React to that answer
+           like a thinking partner:
+             - briefly restate the AI's key point in one line,
+             - point out what's missing, risky, unverified, or too generic in it,
+             - propose the NEXT prompt that pushes the work forward (verify it, fill a gap, go
+               deeper, or move to the next step).
+        B) Real work but no AI answer (code, error, diff, docs, UI, design, tests, half-built
+           feature). Diagnose 2-3 likely bottlenecks and propose the next prompt about THAT work.
+        C) The screen is genuinely blank / initial with NO AI conversation and no work at all.
+           ONLY here may you use idea / MVP / target-user / product-discovery framing.
 
-        Do NOT use generic product-development framing such as MVP, target user, first workflow,
-        or product type unless the screen is truly a blank initial idea state. If code, errors,
-        docs, UI, design, or a partially built app are visible, respond about THAT current work.
+        NEVER use MVP / discovery framing in case A or B. If you're unsure between A and C,
+        assume A and react to what's on screen — discovery is the last resort, used only when
+        there is truly nothing to react to.
 
-        For this mode, choose intent "tighten_draft" and put this structure inside `rewrite`:
-        - "현재 보고 있는 것:" / "What I see:"
-        - "병목 후보:" / "Likely bottlenecks:"
-        - "다음에 물어볼 프롬프트:" / "Next prompt to ask:"
-        - "좋은 답변 예시:" / "A useful answer should cover:"
+        Output mapping — this fills the 2-page advice card. Choose intent "tighten_draft":
+        - `reason` (PAGE 0, shown first):
+            • Case A (an AI answer is visible) → write it in THREE short parts, in \(outputLanguage),
+              each on its own line:
+              1. Summarize what the AI is saying, framed as
+                 \(language == .korean ? "\"🗣️ AI는 지금 이렇게 말하고 있어요: …\"" : "\"🗣️ The AI is saying: …\"") (1-2 lines).
+              2. Its Keep / Improve:
+                 \(language == .korean ? "\"✅ 좋은 점(유지): …\" / \"✏️ 개선하면 좋은 점: …\"" : "\"✅ Keep: …\" / \"✏️ Improve: …\"")
+              3. A suggested next question, framed as
+                 \(language == .korean ? "\"💬 다음엔 이렇게 물어보면 어떨까요?: …\"" : "\"💬 Maybe ask this next: …\"")
+                 — phrase it as a real, ready-to-type question the user could send to the AI.
+            • Case B (work, no AI answer) → one line on what the current work is + the main thing to watch.
+        - `rewrite` (PAGE 1, copyable): for Case A, the SAME suggested next question written out as a
+          complete, ready-to-paste prompt for the AI; for Case B, the concrete next prompt about the work.
+          The user can Tab-copy this, paste/type it, and the coach will then advise on that next draft.
 
-        If there is no concrete work visible, choose stay_silent.
+        If there is truly nothing actionable on screen, choose stay_silent.
         """
             : ""
         let draftGroundingPolicy = isProactiveEmptyContext
@@ -561,6 +575,12 @@ struct OpenAIScreenSuggestionProvider: AIRefinementProvider {
         - Ask a question ONLY when a detail is load-bearing AND you genuinely cannot make a
           reasonable assumption. Even then, ask at most one — and still offer your best draft
           alongside it. A good question is one you could NOT have asked without reading their draft.
+        - STRENGTHS & WEAKNESSES (whenever the user has a draft): don't only criticize. First
+          name ONE concrete thing their prompt already does well and should KEEP, then name the
+          main thing to IMPROVE — both grounded in their actual words. Put this in `reason`
+          formatted as two short lines (in \(outputLanguage)) so they learn what they did right too:
+            \(language == .korean ? "\"✅ 좋은 점(유지): …\"   then   \"✏️ 개선하면 좋은 점: …\"" : "\"✅ Keep: …\"   then   \"✏️ Improve: …\"")
+          Use exactly the labels for the current output language. Keep each to one short line.
 
         # What you can see
         \(screenshotNote)

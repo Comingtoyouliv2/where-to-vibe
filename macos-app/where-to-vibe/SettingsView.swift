@@ -12,7 +12,6 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             primaryAction
-            accessControl
             languageSection
             apiSection
             promptSkillsSection
@@ -69,37 +68,53 @@ struct SettingsView: View {
         }
     }
 
+    // Tap to turn coaching on/off. This IS the live toggle (no separate
+    // "restrict coaching" control) — clicking flips isEnabled, and turning it on
+    // requests Accessibility permission if needed.
     private var statusPill: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(appState.isEnabled ? Color.green : Color.orange)
-                .frame(width: 7, height: 7)
-            Text(appState.isEnabled ? copy.live : copy.paused)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.86))
+        Button {
+            appState.isEnabled.toggle()
+            if appState.isEnabled {
+                _ = AccessibilityTextReader.hasPermission(prompt: true)
+                appState.refreshAccessibilityPermission()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: appState.isEnabled ? "power" : "power.circle")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(appState.isEnabled ? .green : .orange)
+                Circle()
+                    .fill(appState.isEnabled ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                Text(appState.isEnabled ? copy.live : copy.paused)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.86))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill((appState.isEnabled ? Color.green : Color.orange).opacity(0.14))
+                    .overlay(Capsule().stroke((appState.isEnabled ? Color.green : Color.orange).opacity(0.3), lineWidth: 1))
+            )
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(.white.opacity(0.08))
-                .overlay(Capsule().stroke(.white.opacity(0.11), lineWidth: 1))
-        )
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private var primaryAction: some View {
         Button {
-            NotificationCenter.default.post(name: .startIdeaRefinement, object: nil)
+            NotificationCenter.default.post(name: .showWeeklyNote, object: nil)
         } label: {
             HStack(spacing: 11) {
-                Image(systemName: "sparkles")
+                Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 17, weight: .bold))
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(.white.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(copy.refineTitle)
+                    Text(copy.weeklyTitle)
                         .font(.system(size: 14, weight: .semibold))
-                    Text(copy.refineSubtitle)
+                    Text(copy.weeklySubtitle)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.68))
                 }
@@ -123,50 +138,6 @@ struct SettingsView: View {
         .pointerCursor()
     }
 
-    private var accessControl: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(copy.accessTitle, systemImage: "hand.raised.fill")
-
-            Button {
-                appState.isEnabled.toggle()
-                if appState.isEnabled {
-                    _ = AccessibilityTextReader.hasPermission(prompt: true)
-                    appState.refreshAccessibilityPermission()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: appState.isEnabled ? "lock.open.fill" : "lock.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(appState.isEnabled ? .green : .orange)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(.white.opacity(0.08)))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(appState.isEnabled ? copy.restrictAccess : copy.allowAccess)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text(appState.isEnabled ? copy.accessOnDescription : copy.accessOffDescription)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.58))
-                    }
-
-                    Spacer(minLength: 0)
-
-                    Text(appState.isEnabled ? copy.on : copy.off)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(appState.isEnabled ? .green : .orange)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(.white.opacity(0.08)))
-                }
-                .padding(12)
-                .background(cardBackground)
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-        }
-    }
-
     private var languageSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader(copy.languageTitle, systemImage: "character.bubble.fill")
@@ -182,7 +153,43 @@ struct SettingsView: View {
         .background(cardBackground)
     }
 
-    private var apiSection: some View {
+    @ViewBuilder private var apiSection: some View {
+        // When this build runs on our hosted key (the OpenAI proxy is configured
+        // in Info.plist), the user has NOTHING to enter — hide the key field and
+        // provider picker entirely and just confirm it's ready.
+        if appState.isUsingOpenAIProxy {
+            managedKeyCard
+        } else {
+            bringYourOwnKeySection
+        }
+    }
+
+    private var managedKeyCard: some View {
+        let isKorean = appState.promptLanguage == .korean
+        return HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(.white.opacity(0.08)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isKorean ? "바로 사용 가능" : "Ready to go")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(isKorean
+                     ? "where-to-vibe가 AI를 대신 연결해요. API 키를 입력할 필요가 없어요."
+                     : "where-to-vibe runs the AI for you. No API key to enter.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(cardBackground)
+    }
+
+    private var bringYourOwnKeySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 sectionHeader(appState.selectedAICoachProvider.keyLabel, systemImage: "key.fill")
@@ -483,8 +490,8 @@ private struct SettingsCopy {
     let coachStatusTitle: String
     let apiStatusTitle: String
     let permissionStatusTitle: String
-    let refineTitle: String
-    let refineSubtitle: String
+    let weeklyTitle: String
+    let weeklySubtitle: String
     let accessTitle: String
     let allowAccess: String
     let restrictAccess: String
@@ -515,8 +522,8 @@ private struct SettingsCopy {
             coachStatusTitle = "Coach"
             apiStatusTitle = "API"
             permissionStatusTitle = "Access"
-            refineTitle = "Refine an idea"
-            refineSubtitle = "Turn a rough thought into an AI-ready prompt"
+            weeklyTitle = "Weekly note"
+            weeklySubtitle = "Your prompt pros/cons and where to grow"
             accessTitle = "Access"
             allowAccess = "Allow coaching"
             restrictAccess = "Restrict coaching"
@@ -544,8 +551,8 @@ private struct SettingsCopy {
             coachStatusTitle = "코치"
             apiStatusTitle = "API"
             permissionStatusTitle = "접근"
-            refineTitle = "아이디어 구체화"
-            refineSubtitle = "막연한 생각을 AI가 이해할 프롬프트로"
+            weeklyTitle = "주간 노트"
+            weeklySubtitle = "내 프롬프트 장단점과 성장 방향"
             accessTitle = "접근"
             allowAccess = "코칭 허용"
             restrictAccess = "코칭 제한"

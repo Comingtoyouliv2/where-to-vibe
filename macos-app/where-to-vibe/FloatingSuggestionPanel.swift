@@ -449,78 +449,9 @@ struct FloatingSuggestionPanelView: View {
         let reportContentSize = onContentSizeChange
 
         VStack(alignment: .leading, spacing: 9) {
-            // Gap-first teaching: name the dimensions the user's draft is missing
-            // BEFORE showing the rewrite, so they learn the checklist instead of
-            // just copying a finished answer.
-            if !appState.missingAxes.isEmpty {
-                missingAxesCallout
-            }
+            adviceRow
 
-            HStack(alignment: .top, spacing: 8) {
-                coachGlyph
-
-                VStack(alignment: .leading, spacing: 7) {
-                    if !typingModel.visibleReason.isEmpty {
-                        Text(typingModel.visibleReason)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.86))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if !typingModel.visibleSuggestion.isEmpty {
-                        Text(typingModel.visibleSuggestion)
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .lineSpacing(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if typingModel.isTyping {
-                        typingCursor
-                    }
-
-                    // Beginner-only one-line lesson explaining WHY this is a better prompt.
-                    // We surface this under the suggestion (not at the top) so it reads
-                    // as a footnote, not as the headline. Hidden for Intermediate /
-                    // Advanced because we don't want to patronize them.
-                    if typingModel.hasFinished,
-                       let lesson = appState.selectedSuggestion?.microLesson,
-                       !lesson.isEmpty {
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: "lightbulb")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.yellow.opacity(0.78))
-                                .padding(.top, 2)
-                            Text(lesson)
-                                .font(.system(size: 11, weight: .regular))
-                                .foregroundStyle(.white.opacity(0.66))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.top, 2)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-            }
-
-            if typingModel.hasFinished {
-                HStack(spacing: 8) {
-                    if hasCopyableAdvice {
-                        acceptAffordance
-                    }
-                    Text("Esc")
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text("dismiss")
-                        .foregroundStyle(.white.opacity(0.45))
-                    Spacer(minLength: 0)
-                    Text("\(appState.effectiveUserLevel.shortLabel) · \(appState.effectivePromptEvolutionStage.displayName)")
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text(appState.suggestionMode.displayName)
-                        .foregroundStyle(.white.opacity(0.45))
-                }
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.68))
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
+            footerRow
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 10)
@@ -568,12 +499,152 @@ struct FloatingSuggestionPanelView: View {
         }
     }
 
+    /// A single guiding follow-up question for page 0, derived from the first
+    /// missing dimension — "think in this direction" rather than handing over
+    /// the answer. nil when nothing is obviously missing.
+    private var guidingQuestion: String? {
+        guard let axis = appState.missingAxes.first else { return nil }
+        let isKorean = appState.promptLanguage == .korean
+        switch axis {
+        case "target user":
+            return isKorean ? "💭 누가 쓸지부터 떠올려볼까요?" : "💭 Who is it for — start there?"
+        case "goal":
+            return isKorean ? "💭 무엇을 이루고 싶은지부터 정해볼까요?" : "💭 What outcome do you want first?"
+        case "scope":
+            return isKorean ? "💭 어디까지 만들지 범위를 잡아볼까요?" : "💭 How far should it go — set the scope?"
+        case "success criteria":
+            return isKorean ? "💭 어떻게 되면 성공인지 그려볼까요?" : "💭 What would success look like?"
+        case "constraints":
+            return isKorean ? "💭 어떤 제약(플랫폼·기간)이 있나요?" : "💭 Any constraints (platform, time)?"
+        case "context":
+            return isKorean ? "💭 어떤 상황에서 쓰는지 적어볼까요?" : "💭 In what situation is it used?"
+        default:
+            return isKorean ? "💭 '\(axis)'부터 구체화해볼까요?" : "💭 Start by pinning down '\(axis)'?"
+        }
+    }
+
+    private var adviceRow: some View {
+        HStack(alignment: .top, spacing: 8) {
+            coachGlyph
+            VStack(alignment: .leading, spacing: 7) {
+                adviceColumn
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var adviceColumn: some View {
+        // Page 0 — "how to think about it" (the reason / question).
+        if appState.suggestionPage == 0, !typingModel.visibleReason.isEmpty {
+            Text(typingModel.visibleReason)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.86))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        // Page 0 — a guiding follow-up question that nudges the user to think
+        // in the right direction (built from the first missing dimension).
+        if appState.suggestionPage == 0,
+           typingModel.hasFinished,
+           let guidingQuestion {
+            Text(guidingQuestion)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.cyan.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+                .transition(.opacity)
+        }
+
+        // Page 1 — the concrete answer ("저라면 이렇게 …").
+        if appState.suggestionPage == 1, !typingModel.visibleSuggestion.isEmpty {
+            Text(typingModel.visibleSuggestion)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if typingModel.isTyping {
+            typingCursor
+        }
+
+        // Beginner-only one-line lesson, shown on the answer page as a footnote.
+        if appState.suggestionPage == 1,
+           typingModel.hasFinished,
+           let lesson = appState.selectedSuggestion?.microLesson,
+           !lesson.isEmpty {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "lightbulb")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.yellow.opacity(0.78))
+                    .padding(.top, 2)
+                Text(lesson)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 2)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+    @ViewBuilder
+    private var footerRow: some View {
+        if typingModel.hasFinished {
+            HStack(spacing: 8) {
+                if hasConcreteAnswer {
+                    pageNavHint
+                }
+                if hasCopyableAdvice {
+                    acceptAffordance
+                }
+                Text("Esc")
+                    .foregroundStyle(.white.opacity(0.45))
+                Text("dismiss")
+                    .foregroundStyle(.white.opacity(0.45))
+                Spacer(minLength: 0)
+                Text("\(appState.effectiveUserLevel.shortLabel) · \(appState.effectivePromptEvolutionStage.displayName)")
+                    .foregroundStyle(.white.opacity(0.45))
+                Text(appState.suggestionMode.displayName)
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.white.opacity(0.68))
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
     // Renders the accept hint only for suggestions that are safe to insert into
     // the user's focused draft. Advisory cards are read-only and dismiss with Esc.
     /// True when there's something Tab can copy — mirrors the controller's
     /// `copyableAdviceText`: the rewrite (`text`) if present, else the reason.
     private var hasCopyableAdvice: Bool {
         FloatingSuggestionCopy.hasCopyableAdvice(for: appState)
+    }
+
+    /// True when the advice has a concrete answer page (a rewrite), i.e. a 2nd
+    /// page exists and ←/→ navigation is meaningful.
+    private var hasConcreteAnswer: Bool {
+        !(appState.selectedSuggestion?.text ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Two-dot pager + a hint telling the user which arrow reveals what.
+    private var pageNavHint: some View {
+        let isKorean = appState.promptLanguage == .korean
+        let hint = appState.suggestionPage == 0
+            ? (isKorean ? "→ 구체적인 답" : "→ concrete answer")
+            : (isKorean ? "← 고민 포인트" : "← how to think")
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(.white.opacity(appState.suggestionPage == 0 ? 0.9 : 0.3))
+                .frame(width: 5, height: 5)
+            Circle()
+                .fill(.white.opacity(appState.suggestionPage == 1 ? 0.9 : 0.3))
+                .frame(width: 5, height: 5)
+            Text(hint)
+                .foregroundStyle(.white.opacity(0.55))
+        }
     }
 
     @ViewBuilder
@@ -585,94 +656,6 @@ struct FloatingSuggestionPanelView: View {
         // EmptyView here.
         KeyCap("Tab")
         Text("copy")
-    }
-
-    // Gap-first checklist shown above the rewrite. Lists the missing dimensions
-    // (max 4, two per row) so the user learns the prompt checklist by name.
-    private var missingAxesCallout: some View {
-        let axes = Array(appState.missingAxes.prefix(4))
-        let isKorean = appState.promptLanguage == .korean
-        let rows = stride(from: 0, to: axes.count, by: 2).map { start in
-            Array(axes[start..<min(start + 2, axes.count)])
-        }
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.cyan.opacity(0.85))
-                Text(isKorean ? "이걸 채우면 바로 실행돼요" : "Add these to make it buildable")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
-            ForEach(rows.indices, id: \.self) { rowIndex in
-                HStack(spacing: 6) {
-                    ForEach(rows[rowIndex], id: \.self) { axis in
-                        missingAxisChip(axis, isKorean: isKorean)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.cyan.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Color.cyan.opacity(0.18), lineWidth: 1)
-                )
-        )
-    }
-
-    private func missingAxisChip(_ axis: String, isKorean: Bool) -> some View {
-        HStack(spacing: 4) {
-            Text(Self.axisIcon(axis))
-                .font(.system(size: 10))
-            Text(Self.axisLabel(axis, isKorean: isKorean))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.82))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(.white.opacity(0.07))
-                .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
-        )
-    }
-
-    private static func axisIcon(_ axis: String) -> String {
-        switch axis {
-        case "goal": return "🎯"
-        case "scope": return "🧩"
-        case "target user": return "👤"
-        case "success criteria": return "✅"
-        case "constraints": return "⛔️"
-        case "context": return "🧭"
-        default: return "•"
-        }
-    }
-
-    // Domain-neutral labels: these are about clarifying ANY piece of writing, not
-    // just software. Avoid product jargon like "target user" / "success criteria".
-    private static func axisLabel(_ axis: String, isKorean: Bool) -> String {
-        if isKorean {
-            switch axis {
-            case "goal": return "목표"
-            case "scope": return "범위"
-            case "target user": return "누구를 위한지"
-            case "success criteria": return "좋은 결과 기준"
-            case "constraints": return "제약"
-            case "context": return "맥락"
-            default: return axis
-            }
-        }
-        switch axis {
-        case "target user": return "who it's for"
-        case "success criteria": return "what 'good' means"
-        default: return axis
-        }
     }
 
     private var coachGlyph: some View {

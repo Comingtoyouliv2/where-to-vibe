@@ -33,7 +33,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var promptCoachController: PromptCoachController?
     private var introSequenceController: IntroSequenceController?
-    private var ideaRefinementController: IdeaRefinementController?
+    private var weeklyNoteController: WeeklyNoteController?
+    private var answerSummaryController: AnswerSummaryController?
     private var sparkleUpdaterController: SPUStandardUpdaterController?
     private let accessibilityOnboarder = AccessibilityPermissionOnboarder()
 
@@ -70,16 +71,28 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         registerAsLoginItemIfNeeded()
         // startSparkleUpdater()
 
-        // Open the guided idea-refinement chat when the menu-bar panel asks.
+        // Open the weekly prompt note (pros/cons + growth direction) when the
+        // menu-bar panel asks. Computed locally from the on-disk habit log.
         NotificationCenter.default.addObserver(
-            forName: .startIdeaRefinement, object: nil, queue: .main
+            forName: .showWeeklyNote, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.ideaRefinementController == nil {
-                    self.ideaRefinementController = IdeaRefinementController(appState: self.appState)
+                if self.weeklyNoteController == nil {
+                    self.weeklyNoteController = WeeklyNoteController(appState: self.appState)
                 }
-                self.ideaRefinementController?.show()
+                self.weeklyNoteController?.show()
+            }
+        }
+
+        // "Summarize the AI's answer" — created at launch so its ⌃⌥S hotkey is
+        // active immediately; the menu button posts a notification too.
+        answerSummaryController = AnswerSummaryController(appState: appState)
+        NotificationCenter.default.addObserver(
+            forName: .summarizeAIAnswer, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.answerSummaryController?.summarizeFromMenu()
             }
         }
 
@@ -179,6 +192,28 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
+
+        // Standard Edit menu. Without it, ⌘C/⌘V/⌘X/⌘A do nothing in our text
+        // fields: this app is an LSUIElement (menu-bar accessory), and macOS
+        // routes those editing shortcuts through the main menu's Edit items
+        // (via their key equivalents) to the first responder. With no Edit menu,
+        // a focused SecureField/TextField accepts typed characters but can't
+        // paste — which is why users couldn't paste their API key. The actions
+        // use nil targets so they travel the responder chain to the field editor
+        // (NSText), which implements cut:/copy:/paste:/selectAll:/undo:/redo:.
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: Selector(("cut:")), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: Selector(("copy:")), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: Selector(("paste:")), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: Selector(("selectAll:")), keyEquivalent: "a")
+        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         NSApp.mainMenu = mainMenu
     }
 

@@ -151,6 +151,10 @@ final class AppState: ObservableObject {
     @Published private(set) var hasAccessibilityPermission = false
     @Published var currentInput: String = ""
     @Published var suggestions: [PromptSuggestion] = []
+    /// Which page of the current advice card is shown: 0 = "how to think"
+    /// (the reason/question), 1 = the concrete answer. Driven by ←/→ while the
+    /// panel is up; reset to 0 whenever the advice changes.
+    @Published var suggestionPage: Int = 0
     // Dimensions the user's current draft is missing (e.g. "target user",
     // "success criteria"). Surfaced in the panel as a gap-first checklist so the
     // user learns WHAT to add, not just copies a finished rewrite.
@@ -303,6 +307,7 @@ final class AppState: ObservableObject {
     func setSuggestions(_ suggestions: [PromptSuggestion], reason: String?, missingAxes: [String] = []) {
         self.suggestions = suggestions
         self.selectedSuggestionIndex = 0
+        self.suggestionPage = 0
         self.lastReason = reason
         self.missingAxes = missingAxes
     }
@@ -310,6 +315,7 @@ final class AppState: ObservableObject {
     func clearSuggestions() {
         suggestions = []
         selectedSuggestionIndex = 0
+        suggestionPage = 0
         lastReason = nil
         missingAxes = []
     }
@@ -331,6 +337,12 @@ final class AppState: ObservableObject {
         }
         axisMasteryCounts = updatedCounts
         UserDefaults.standard.set(updatedCounts, forKey: "PromptCoach.axisMasteryCounts")
+
+        // Log this draft's strengths (axes present) and gaps (axes missing) to the
+        // local habit store so the weekly note can summarize pros/cons over time.
+        let presentAxes = AppState.coachSkillAxes.filter { !missingAxes.contains($0) }
+        let relevantMissing = missingAxes.filter { AppState.coachSkillAxes.contains($0) }
+        PromptHabitStore.shared.add(presentAxes: presentAxes, missingAxes: relevantMissing)
     }
 
     func isSkillMastered(_ axis: String) -> Bool {

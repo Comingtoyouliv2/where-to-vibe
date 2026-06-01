@@ -12,3 +12,9 @@ ELEVENLABS_VOICE_ID = "kPzsL2i3teMYv0FxEYQ6"
 # since /classify only needs a single-word answer.
 COACH_MODEL = "claude-sonnet-4-6"
 CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
+# Route the /openai-responses proxy through Cloudflare AI Gateway so the call to
+# OpenAI egresses from a supported region (fixes the 403
+# "unsupported_country_region_territory" seen when a Worker calls OpenAI direct).
+# The "default" gateway is auto-created on the first request. The worker appends
+# "/responses" to this base.
+OPENAI_BASE_URL = "https://gateway.ai.cloudflare.com/v1/1df6158c410d60cc3217209e4cc6ef47/default/openai"

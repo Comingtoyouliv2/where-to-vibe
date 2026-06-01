@@ -2,10 +2,10 @@
 # Secrets and per-machine config — NEVER commit
 # =============================================================================
 
-# Info.plist embeds machine-local settings (WorkerBaseURL) and optionally a
-# dev-mode AnthropicAPIKey. The committed template is Info.plist.example.
-macos-app/where-to-vibe/Info.plist
-!macos-app/where-to-vibe/Info.plist.example
+# Info.plist is now COMMITTED so the project builds with no `cp` step and ships
+# with the hosted OpenAI proxy URL baked in. It carries NO secrets — the real
+# API keys live only as Cloudflare Worker secrets, never in this file. The
+# AnthropicAPIKey field stays empty here. (Info.plist.example is kept as docs.)
 
 # Cloudflare Worker dev secrets. Committed template is .dev.vars.example.
 worker/.dev.vars
