@@ -34,7 +34,10 @@ macos-app/DerivedData/
 macos-app/**/xcuserdata/
 macos-app/**/*.xcuserdatad/
 macos-app/**/*.xcuserstate
-macos-app/**/*.xcscheme
+# NOTE: do NOT ignore *.xcscheme blanket — shared schemes
+# (xcshareddata/xcschemes/*.xcscheme) MUST be committed so CI and fresh clones
+# can resolve `-scheme where-to-vibe`. Per-user schemes already live under the
+# ignored xcuserdata/ above.
 
 # Swift Package Manager
 .swiftpm/
