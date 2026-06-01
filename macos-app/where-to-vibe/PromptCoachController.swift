@@ -187,6 +187,18 @@ final class PromptCoachController {
                 userLevel: self.appState.effectiveUserLevel,
                 stage: self.appState.effectivePromptEvolutionStage
             )
+            // Also log to the server event DB so we can analyze which advice
+            // users find useful: (what they wrote) -> (the advice they accepted).
+            // Anonymous + fire-and-forget; never blocks the accept.
+            AcceptEventLogger.logAccepted(
+                originalInput: self.appState.currentInput,
+                acceptedAdvice: adviceText,
+                reason: self.appState.lastReason,
+                userLevel: self.appState.effectiveUserLevel.rawValue,
+                stage: self.appState.effectivePromptEvolutionStage.rawValue,
+                language: self.appState.promptLanguage.rawValue,
+                appName: self.appState.watchedAppName
+            )
             self.appState.clearSuggestions()
             self.floatingPanel.hide()
         }

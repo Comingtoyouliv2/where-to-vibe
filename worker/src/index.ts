@@ -56,6 +56,11 @@ interface Env {
   // (it ships in the binary) but filters drive-by abuse. Real cost ceiling is
   // the hard spend cap on the OpenAI account.
   APP_SHARED_TOKEN?: string;
+  // Cloudflare D1 database for the accepted-advice event log. Optional so the
+  // Worker still deploys before the D1 binding is added; /events returns 503
+  // until it's bound. Create with `wrangler d1 create wtv-events`, then add the
+  // [[d1_databases]] binding (binding = "DB") in wrangler.toml.
+  DB?: D1Database;
 }
 
 interface CoachRequest {
@@ -97,6 +102,10 @@ export default {
         // --- OpenAI suggestion-card proxy (runs on our key) ---
         case "/openai-responses":
           return await handleOpenAIResponses(request, env);
+
+        // --- accepted-advice event log (Cloudflare D1) ---
+        case "/events":
+          return await handleAcceptEvent(request, env);
 
         // --- upstream routes kept for backward compat ---
         case "/chat":
@@ -180,6 +189,63 @@ async function handleOpenAIResponses(request: Request, env: Env): Promise<Respon
     status: upstream.status,
     headers: { "content-type": "application/json" },
   });
+}
+
+// ---------------------------------------------------------------------------
+// /events — log one accepted suggestion (what the user wrote -> the advice they
+// accepted) into Cloudflare D1, so we can analyze which advice users find
+// useful. Anonymous (a per-install device id, no PII). Best-effort: never
+// blocks the app's accept UX.
+// ---------------------------------------------------------------------------
+
+async function handleAcceptEvent(request: Request, env: Env): Promise<Response> {
+  if (env.APP_SHARED_TOKEN && request.headers.get("x-app-token") !== env.APP_SHARED_TOKEN) {
+    return jsonResponse(401, { error: "unauthorized" });
+  }
+  if (!env.DB) {
+    return jsonResponse(503, { error: "event log not configured (D1 binding 'DB' missing)" });
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(400, { error: "invalid JSON body" });
+  }
+  if (typeof body !== "object" || body === null) {
+    return jsonResponse(400, { error: "expected a JSON object body" });
+  }
+
+  // Clip strings so a tampered client can't write huge rows. Prompts are user
+  // content; 8k chars each is plenty for analysis.
+  const clip = (value: unknown, max: number): string | null =>
+    typeof value === "string" ? value.slice(0, max) : null;
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO accept_events
+         (id, device_id, original_input, accepted_advice, reason, user_level, stage, language, app_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        clip(body.deviceId, 64) ?? "unknown",
+        clip(body.originalInput, 8000),
+        clip(body.acceptedAdvice, 8000),
+        clip(body.reason, 8000),
+        clip(body.userLevel, 32),
+        clip(body.stage, 32),
+        clip(body.language, 16),
+        clip(body.appName, 128),
+        new Date().toISOString()
+      )
+      .run();
+  } catch (err) {
+    console.error("[/events] D1 insert failed", err);
+    return jsonResponse(500, { error: "insert failed" });
+  }
+
+  return new Response(null, { status: 204 });
 }
 
 // ---------------------------------------------------------------------------
