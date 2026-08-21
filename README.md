@@ -1,3 +1,5 @@
+
+
 # Where-to-vibe for macOS
 
 > **Install in one Terminal command — see [Install (macOS)](#install-macos) below.**
@@ -93,7 +95,7 @@ To uninstall: `rm -rf ~/Applications/Where-to-vibe.app`
 Requirements:
 
 - macOS 14.2+
-- Xcode 15+
+- Xcode 16+
 - Accessibility permission for the built app
 - Optional OpenAI API key for screen-aware `Fast AI` and `High Quality AI`
   suggestions
